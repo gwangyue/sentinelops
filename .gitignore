@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+fixtures/**/*.jsonl
+!fixtures/index.jsonl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.tfstate*
+.terraform/
