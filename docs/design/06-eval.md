@@ -325,7 +325,8 @@ top-1（dev，95% 区间）
 |---|---|
 | 数据集 | 每个领域一个数据集：`sentinel-es`、`sentinel-mysql`。用例的 metadata 里包含 difficulty、scenario_id、stream_id 等字段 |
 | 拉取 | `client.list_examples(dataset_name=..., as_of="ds-20261120-1", splits=["dev"])` [3] |
-| 运行 | `evaluate(target, data=..., evaluators=[...], num_repetitions=3, max_concurrency=4, metadata={"agent_version": ..., "dataset_version": ...}, experiment_prefix="v14")` [1][2]【`metadata` 和 `experiment_prefix` 参数据记忆，待技术验证 S4 确认】 |
+| 运行 | `evaluate(target, data=..., evaluators=[...], num_repetitions=3, max_concurrency=4, metadata={"agent_version": ..., "dataset_tag": ...}, experiment_prefix="v14")` [1][2]（S4 已确认，langsmith 0.10.10）。注意：metadata 里不能用 `dataset_version` 这个键，SDK 会用时间戳覆盖它，所以标签名用 `dataset_tag`；按版本筛选用 `list_projects(reference_dataset_name=..., metadata={"agent_version": ...})` |
+| 打标签 | `update_dataset_tag(as_of=...)` 的 `as_of` 要取 `list_dataset_versions()` 里最新版本的时间。不能用 `dataset.modified_at`：它不随添加用例前进，标签会指向一个空版本（S4 踩过的坑） |
 | 评分 | 确定性评分器作为 evaluator 函数，结果写入 LangSmith 的 feedback |
 | 统计 | 用 SDK 把结果拉到本地，用自己的代码计算聚类 bootstrap。LangSmith 界面上显示的是平均分和标准差 [2]，没有按场景聚类的区间【推断】 |
 | 查看 | 单个用例的完整 Trace，以及两个实验之间逐个用例的对比，直接看 LangSmith 界面 |
@@ -397,6 +398,6 @@ top-1（dev，95% 区间）
 2. LangChain 文档：Experiment configuration（`num_repetitions`、`max_concurrency`、`LANGSMITH_TEST_CACHE`）— https://docs.langchain.com/langsmith/experiment-configuration （2026-11-09 读取）
 3. LangChain 文档：Manage datasets（自动生成版本、`update_dataset_tag`、`list_examples(as_of, splits, metadata)`）— https://docs.langchain.com/langsmith/manage-datasets （2026-11-09 读取）
 4. 实测：`appendix/power_sim.py`，本机运行（2 vCPU、7 GiB、numpy 2.5.3，种子 0）。模拟的乐观假设见"内容来源说明"。
-5. 未核实：`evaluate()` 的 `metadata` 和 `experiment_prefix` 参数（据记忆）；缓存对重复运行的具体影响（推断）。都列入 08 篇的技术验证 S4。
+5. S4 实测（spike-results.md）：`evaluate()` 的 `num_repetitions`、`metadata`、`experiment_prefix` 都可用；没有设置 `LANGSMITH_TEST_CACHE` 时，3 次重复的输出各不相同，没有被缓存。
 
 本篇完。下一篇：07 治理。

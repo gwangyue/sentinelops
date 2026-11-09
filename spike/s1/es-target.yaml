@@ -1,0 +1,30 @@
+# S1：es-target，3 个节点（master+data），heap 1Gi（01 §5 的初始估算）。
+# 容器内存上限 2Gi = heap 的 2 倍，给堆外内存和页缓存留余量（ES 官方建议 heap ≤ 50%）。
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: es-target
+  namespace: targets
+spec:
+  version: 9.5.3
+  nodeSets:
+    - name: data
+      count: 3
+      config:
+        node.store.allow_mmap: false   # kind 节点上没有调 vm.max_map_count，关掉 mmap 避免启动失败
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: "-Xms1g -Xmx1g"
+              resources:
+                requests: { memory: 2Gi, cpu: 500m }
+                limits: { memory: 2Gi }
+      volumeClaimTemplates:
+        - metadata: { name: elasticsearch-data }
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: es-fixed
+            resources: { requests: { storage: 3Gi } }

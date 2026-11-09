@@ -1,0 +1,19 @@
+# 网络分区：data-2 与另外两个 ES 节点双向隔离
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata: { name: spike-partition, namespace: targets }
+spec:
+  action: partition
+  mode: one
+  duration: "10m"
+  direction: both
+  selector:
+    namespaces: [targets]
+    labelSelectors: { statefulset.kubernetes.io/pod-name: es-target-es-data-2 }
+  target:
+    mode: all
+    selector:
+      namespaces: [targets]
+      labelSelectors: { elasticsearch.k8s.elastic.co/cluster-name: es-target }
+      expressionSelectors:
+        - { key: statefulset.kubernetes.io/pod-name, operator: NotIn, values: [es-target-es-data-2] }

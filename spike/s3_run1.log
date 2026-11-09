@@ -1,0 +1,14 @@
+/Users/yuewangchen/.cache/uv/archive-v0/6iGzM5rMRF16glEm/lib/python3.13/site-packages/google/genai/types.py:18161: SyntaxWarning: invalid escape sequence '\/'
+  description="""Output only. The original name of the uploaded file, taken from the `Content-Disposition` header on upload. Between 1 and 255 characters. Control characters and the characters `<>:"|?*\/` are not accepted.""",
+/Users/yuewangchen/.cache/uv/archive-v0/6iGzM5rMRF16glEm/lib/python3.13/site-packages/google/genai/types.py:18199: SyntaxWarning: invalid escape sequence '\/'
+  """Output only. The original name of the uploaded file, taken from the `Content-Disposition` header on upload. Between 1 and 255 characters. Control characters and the characters `<>:"|?*\/` are not accepted."""
+INFO:     Started server process [16308]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:54635 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54637 - "POST /inv HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [16308]

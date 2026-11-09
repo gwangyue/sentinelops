@@ -1,6 +1,7 @@
 # ADR-008 诊断用 Gemini Flash 档，评审用 Pro 档；所有调用经过统一封装
 
-- 状态：已接受，具体型号在技术验证 S3 中确定（2026-11-09）
+- 状态：已接受。型号在技术验证中确定（2026-11-09）：诊断 `gemini-3.7-flash`（version 3.7-flash-08-2026），评审 `gemini-3.1-pro-preview`（version 3.1-pro-preview-01-2026），embedding `gemini-embedding-001`（768 维）。`*-latest` 是别名，按 G2 禁止使用
+- 注意：评审模型是 preview 版，可能在项目进行中被下线，届时要换型号并重新冻结版本；思考 token 计入 `max_output_tokens`，`thinking_budget` 要作为模型参数写进 AgentVersion（S3 实测）
 - 相关：01 篇 §3.4、06 篇 §6.1
 
 ## 背景

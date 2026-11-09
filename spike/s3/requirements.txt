@@ -1,0 +1,8 @@
+deepagents==0.7.34
+langgraph==1.2.20
+langchain==1.4.9
+langchain-google-genai==4.4.3
+langgraph-checkpoint-postgres==3.2.0
+psycopg[binary,pool]
+fastapi
+uvicorn

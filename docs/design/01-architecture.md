@@ -125,7 +125,7 @@
 
 | 存储 | 存什么 | 为什么用它 |
 |---|---|---|
-| Postgres | checkpoint、审批、审计、版本、问题事件、观测记录索引 | 需要事务保证，审计要只追加，checkpointer 有现成的 Postgres 实现【据记忆：langgraph-checkpoint-postgres】 |
+| Postgres | checkpoint、审批、审计、版本、问题事件、观测记录索引 | 需要事务保证，审计要只追加，checkpointer 有现成的 Postgres 实现（`langgraph-checkpoint-postgres`，S3 实测可用） |
 | es-memory | 事故记忆、runbook 和知识库 | 需要关键词和向量的混合检索。这也是作者的专长领域 |
 | 文件或 S3 | 回放录制、大块的工具输出 | 体积大，只追加写，按场景组织 |
 | LangSmith | Trace、数据集、实验结果 | 不自建观测系统（00 篇的不做清单） |
@@ -191,10 +191,12 @@ sentinelops/
 | **B. 本地全链路** | kind 集群：所有组件 + es-target + mysql + Chaos Mesh | 录制新场景、端到端演示、联调执行器 | `make kind-up` |
 | **C. AWS EKS** | 和 B 用同一套 Helm chart，只换 `values-aws.yaml` | 云上演示，证明能部署到云 | `terraform apply` 之后 `helm install` |
 
-**本地资源【估算】**：
+**本地资源（S1 实测，见 spike-results.md）**：
 
-- es-target：3 节点，每个节点 1Gi heap；es-memory：1 节点；再加上 MySQL、Postgres、agent 和 Chaos Mesh。
-- 合计约 10–12 GiB 内存。机器内存在 16 GiB 以下时，把 es-target 每个节点的 heap 降到 512Mi。
+- es-target：3 节点，每个节点 1Gi heap、容器上限 2Gi。kind 的 3 个节点合计约 6.1 GiB（Docker Desktop 分配 9.7 GiB），余量约 3.6 GiB，留给 es-memory、MySQL、Postgres、agent 和 Chaos Mesh。
+- 机器 16 GiB 时，Docker Desktop 至少分配 10 GiB。放不下时，再把 es-target 每个节点的 heap 降到 512Mi。
+- es-target 的数据卷必须是**固定大小**的（每个 worker 节点上用 loop 设备建 3G ext4，做成静态 local PV）。kind 默认的 local-path 卷和 Docker VM 共用一块盘，磁盘填充故障会把整个 VM 写满（S2 发现）。
+- 所有 kubectl 和 helm 命令都显式指定 `--context kind-sentinel`，防止误操作本机的其他集群。
 
 ### 5.1 K8s 命名空间与网络策略
 
@@ -244,7 +246,7 @@ flowchart LR
 | sentinel-data 的入站流量 | 只允许来自 sentinel-system 和 sentinel-exec |
 | 访问外网 | 只允许 sentinel-system（调用 Gemini 和 LangSmith）和评测 Job |
 
-kind 默认的网络插件不支持 NetworkPolicy【据记忆，待验证】，本地需要换成 Calico 或 Cilium。如果技术验证时发现太麻烦，本地就先不强制执行网络策略，只在 EKS 上启用，并在文档里写明这一点。
+kind 默认的网络插件 kindnet（kind v0.33）**会执行** NetworkPolicy（S1 实测：有策略时，从不允许的命名空间访问会超时；去掉策略后能连通），本地不需要换插件。写策略时要放行 ECK operator 所在的 `elastic-system` 命名空间，以及 ES 节点之间的流量。
 
 ### 5.2 AWS 网络拓扑（东京区域 ap-northeast-1）
 
@@ -283,7 +285,7 @@ kind 默认的网络插件不支持 NetworkPolicy【据记忆，待验证】，�
 
 | 主体 | es-target | mysql-target | Postgres | es-memory | 外网 |
 |---|---|---|---|---|---|
-| 诊断 Agent（运行在 agent-api 里） | **只读**：`monitor`、`view_index_metadata` 这类权限【据记忆】 | **只读**：`PROCESS`、读取 `performance_schema` | 读写 | 读 | Gemini、LangSmith |
+| 诊断 Agent（运行在 agent-api 里） | **只读**：cluster `monitor`；indices `*` 的 `monitor`、`view_index_metadata`（S1 实测：10 个只读 API 都够用；读不到文档内容） | **只读**：`PROCESS`、读取 `performance_schema` | 读写 | 读 | Gemini、LangSmith |
 | 记忆写入（agent-api，人确认之后） | — | — | 读写 | **写** | — |
 | 执行器 | **只有动作目录需要的那些写权限** | 同左 | 读审批、写审计 | — | **禁止** |
 | 评测运行器 | 回放模式下不访问 | 同左 | 读写 | 读写（消融实验用单独的索引） | Gemini、LangSmith |
@@ -311,7 +313,7 @@ kind 默认的网络插件不支持 NetworkPolicy【据记忆，待验证】，�
 | 回放时模糊匹配参数 | 评测分数虚高 | 找不到录制时应该报"未覆盖"，而不是返回一个相近参数的输出 |
 | 记忆和目标集群放在一起 | 注入故障时记忆也一起坏了 | 3.3 节 |
 | 工具输出直接塞进上下文 | token 爆掉，模型开始"读不进去" | 工具输出先进观测记录存储，进上下文时只放摘要和观测 ID（详见 04 篇） |
-| 在 kind 上直接写 NetworkPolicy | 策略写了但不生效，自己却以为已经隔离 | 默认的网络插件不执行 NetworkPolicy【据记忆】，需要换插件，或者在文档里写明 |
+| 在 kind 上直接写 NetworkPolicy | 策略写了但不生效，自己却以为已经隔离 | 每次改完策略，都从一个不允许的命名空间实际访问一次，确认被拒绝（kindnet 会执行策略，但策略本身可能写错） |
 
 ## 9. 和熟悉的技术对照
 

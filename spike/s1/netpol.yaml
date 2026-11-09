@@ -1,0 +1,12 @@
+# S1：targets 只允许来自 sentinel-system 的入站（01 §5.1 的简化版）；ECK operator 也要放行，否则它管不了集群
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: targets-ingress, namespace: targets }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-system } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: elastic-system } }
+        - podSelector: {}   # ES 节点之间的 9300 传输流量
