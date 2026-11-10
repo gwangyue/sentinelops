@@ -32,6 +32,14 @@ class MemoryStore:
     def list_investigations(self, limit: int = 20) -> list[InvestigationRecord]:
         return sorted(self.invs.values(), key=lambda r: r.created_at, reverse=True)[:limit]
 
+    def recent_fingerprints(self, target: str, since: datetime, exclude: str) -> set[str]:
+        return {
+            f["fingerprint"]
+            for r in self.invs.values()
+            if r.target == target and r.created_at >= since and r.id != exclude
+            for f in r.findings
+        }
+
     def append_audit(
         self,
         *,

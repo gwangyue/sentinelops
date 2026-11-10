@@ -71,12 +71,16 @@ def test_unknown_label_becomes_none(harness: H) -> None:
     assert d.hypotheses[0].root_cause_label is None
 
 
-def test_token_budget_escalates(harness: H) -> None:
-    policy = {**load_context_policy(), "investigation_token_budget": 100}
+def test_token_budget_aborts_mid_run(harness: H) -> None:
+    # 假模型每次调用记 1100 token：第 1 次 1100 < 1500，第 2 次累计 2200 > 1500 → 立刻中止，不等诊断结束
+    policy = {**load_context_policy(), "investigation_token_budget": 1500}
     h = harness("disk_watermark", diagnose_script(), policy)
     s = h.run()
-    assert s["escalate_reason"].startswith("budget")
-    assert "budget.exceeded" in h.audit_types(s["inv_id"])
+    assert h.model.calls == 2
+    assert s["status"] == "escalated" and s["escalate_reason"].startswith("budget")
+    assert s["diagnosis"] is None
+    types = h.audit_types(s["inv_id"])
+    assert "budget.exceeded" in types and "diagnosis.completed" not in types
 
 
 def test_unfrozen_version_refuses_to_start(harness: H) -> None:
@@ -105,3 +109,15 @@ def test_context_bundle_keeps_l0_and_abnormal(harness: H) -> None:
     budgets = load_context_policy()["budgets"]
     assert s["bundle"]["tokens_by_layer"]["L0"] <= budgets["L0"]
     assert s["bundle"]["tokens_by_layer"]["L1"] <= budgets["L1"]
+
+
+def test_same_fingerprint_within_30_minutes_is_deduplicated(harness: H) -> None:
+    # 02 §2：同一份录制连续巡检两次，第二次的问题事件指纹和第一次相同 → 不进入诊断、不调用模型
+    h = harness("disk_watermark", diagnose_script())
+    first = h.run()
+    calls = h.model.calls
+    second = h.run()
+    assert first["status"] == "diagnosed" and second["status"] == "deduplicated"
+    assert h.model.calls == calls
+    types = h.audit_types(second["inv_id"])
+    assert types.count("finding.deduplicated") == 2 and "diagnosis.completed" not in types

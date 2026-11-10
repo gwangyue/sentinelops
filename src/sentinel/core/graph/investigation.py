@@ -7,7 +7,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, TypedDict
 
 from langchain_core.language_models import BaseChatModel
@@ -18,7 +18,7 @@ from langgraph.graph.state import CompiledStateGraph
 from sentinel.contracts import AgentVersion, ContextBundle, FactSheet, Finding
 from sentinel.core.context.build import build_context
 from sentinel.core.detect import run_detect
-from sentinel.core.diagnosis.agent import run_diagnosis
+from sentinel.core.diagnosis.agent import BudgetExceeded, run_diagnosis
 from sentinel.core.diagnosis.evidence import check_evidence, support_rate
 from sentinel.core.llm.chat import run_tags
 from sentinel.core.observations.store import ObservationStore
@@ -27,6 +27,8 @@ from sentinel.core.store import InvestigationRecord, Store
 from sentinel.core.toolbackend import ToolBackend
 
 ACTOR = "agent"
+# 02 §2：同一个指纹 30 分钟内只调查一次，否则同一个问题每次巡检都会触发一次调查
+DEDUP_WINDOW = timedelta(minutes=30)
 
 
 class InvState(TypedDict, total=False):
@@ -38,10 +40,11 @@ class InvState(TypedDict, total=False):
     findings: list[dict[str, Any]]
     fact_sheets: list[dict[str, Any]]
     bundle: dict[str, Any]
-    diagnosis: dict[str, Any]
+    diagnosis: dict[str, Any] | None  # 预算中途耗尽时为 None
     status: str
     escalate_reason: str | None
     model_calls: int
+    deduplicated: bool  # 本次的问题事件 30 分钟内都已经调查过
 
 
 @dataclass
@@ -101,11 +104,21 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
                 "finding.detected",
                 {"finding": f.id, "detector": f.detector, "severity": f.severity, "fingerprint": f.fingerprint},
             )
-        # TODO(edge): 指纹 30 分钟窗口去重（02 §2，finding.deduplicated）——需要查最近的调查，M2 做
         findings = [f.model_dump(mode="json") for f in res.findings]
         sheets = [s.model_dump(mode="json") for s in res.fact_sheets]
         deps.store.update_investigation(state["inv_id"], findings=findings, fact_sheets=sheets)
-        return {"findings": findings, "fact_sheets": sheets}
+        seen = deps.store.recent_fingerprints(state["target"], datetime.now(UTC) - DEDUP_WINDOW, state["inv_id"])
+        fresh = [f for f in res.findings if f.fingerprint not in seen]
+        for f in res.findings:
+            if f.fingerprint in seen:
+                audit(state, "finding.deduplicated", {"finding": f.id, "fingerprint": f.fingerprint})
+        # 只要有一个新问题就照常诊断（上下文里仍然带上全部问题事件）；全部重复才跳过诊断
+        return {"findings": findings, "fact_sheets": sheets, "deduplicated": bool(res.findings) and not fresh}
+
+    def deduplicated(state: InvState) -> InvState:
+        deps.store.update_investigation(state["inv_id"], status="deduplicated")
+        audit(state, "investigation.closed", {"outcome": "deduplicated"})
+        return {"status": "deduplicated"}
 
     def healthy(state: InvState) -> InvState:
         # 快速路径：没有问题事件就结束，整个流程不调用 LLM（02 §2）
@@ -134,14 +147,21 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
     def diagnose(state: InvState) -> InvState:
         pack = deps.packs[state["pack"]]
         bundle = ContextBundle.model_validate(state["bundle"])
-        res = run_diagnosis(
-            model=deps.make_model("diagnosis"),
-            pack=pack,
-            backend=deps.backend(pack, state["inv_id"]),
-            obs_store=deps.obs_store,
-            bundle=bundle,
-            run_config=run_tags("diagnosis", state["agent_version"], state["inv_id"]),
-        )
+        budget = deps.policy["investigation_token_budget"]
+        try:
+            res = run_diagnosis(
+                model=deps.make_model("diagnosis"),
+                pack=pack,
+                backend=deps.backend(pack, state["inv_id"]),
+                obs_store=deps.obs_store,
+                bundle=bundle,
+                run_config=run_tags("diagnosis", state["agent_version"], state["inv_id"]),
+                token_budget=budget,
+            )
+        except BudgetExceeded as e:
+            # 中途中止：没有诊断结果，直接升级给人（02 §1；07 §3 T8）
+            audit(state, "budget.exceeded", {"tokens": e.used, "budget": e.budget})
+            return {"diagnosis": None, "escalate_reason": f"budget: {e}"}
         d = res.diagnosis
         rate = support_rate(check_evidence(d, deps.obs_store.list(state["inv_id"])))
         audit(
@@ -157,11 +177,7 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
                 "tokens_out": d.tokens_out,
             },
         )
-        reason = _escalation_reason(
-            d.escalate, d.escalate_reason, [h.confidence for h in d.hypotheses], d.tokens_in + d.tokens_out, deps.policy
-        )
-        if reason and reason.startswith("budget"):
-            audit(state, "budget.exceeded", {"tokens": d.tokens_in + d.tokens_out})
+        reason = _escalation_reason(d.escalate, d.escalate_reason, [h.confidence for h in d.hypotheses], deps.policy)
         return {
             "diagnosis": d.model_dump(mode="json"),
             "escalate_reason": reason,
@@ -184,6 +200,7 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         ("intake", intake),
         ("detect", detect),
         ("healthy", healthy),
+        ("deduplicated", deduplicated),
         ("route", route),
         ("build_context", context),
         ("diagnose", diagnose),
@@ -192,8 +209,13 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         g.add_node(name, fn)
     g.add_edge(START, "intake")
     g.add_edge("intake", "detect")
-    g.add_conditional_edges("detect", lambda s: "route" if s["findings"] else "healthy", ["route", "healthy"])
+    g.add_conditional_edges(
+        "detect",
+        lambda s: "healthy" if not s["findings"] else "deduplicated" if s.get("deduplicated") else "route",
+        ["route", "healthy", "deduplicated"],
+    )
     g.add_edge("healthy", END)
+    g.add_edge("deduplicated", END)
     g.add_edge("route", "build_context")
     g.add_edge("build_context", "diagnose")
     g.add_edge("diagnose", "report")  # 只报告模式：诊断之后直接出报告；plan 节点在 M3
@@ -201,12 +223,8 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
     return g.compile(checkpointer=checkpointer)
 
 
-def _escalation_reason(
-    escalate: bool, why: str | None, confidences: list[float], tokens: int, policy: dict[str, Any]
-) -> str | None:
-    """02 §1"置信度低 → 升级给人"。返回 None 表示不升级。"""
-    if tokens > policy["investigation_token_budget"]:
-        return f"budget: 用了 {tokens} token，超过上限 {policy['investigation_token_budget']}"
+def _escalation_reason(escalate: bool, why: str | None, confidences: list[float], policy: dict[str, Any]) -> str | None:
+    """02 §1"置信度低 → 升级给人"。返回 None 表示不升级。token 预算在诊断过程中检查（agent.TokenBudget）。"""
     if escalate:
         return f"model: {why or '模型认为证据不足'}"
     if not confidences:

@@ -15,8 +15,10 @@ from typing import Any
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StateBackend
 from langchain.agents.structured_output import ToolStrategy
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.outputs import LLMResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
@@ -42,6 +44,29 @@ class DiagnosisOutput(BaseModel):
     hypotheses: list[Hypothesis] = Field(max_length=3, description="按置信度从高到低，最多 3 个")
     escalate: bool = Field(description="证据不足以支持任何假设时为 true")
     escalate_reason: str | None = None
+
+
+class BudgetExceeded(RuntimeError):
+    def __init__(self, used: int, budget: int) -> None:
+        super().__init__(f"用了 {used} token，超过上限 {budget}")
+        self.used, self.budget = used, budget
+
+
+class TokenBudget(BaseCallbackHandler):
+    """每次模型调用结束后累加 token，超过上限就中止诊断（01 §3.4；M1 审阅发现 5：原来只在诊断结束后才检查）。"""
+
+    raise_error = True  # LangChain 默认吞掉回调里的异常；这里要让它真正中断 Agent
+
+    def __init__(self, budget: int) -> None:
+        self.budget, self.used = budget, 0
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        for gens in response.generations:
+            for g in gens:
+                usage = getattr(getattr(g, "message", None), "usage_metadata", None) or {}
+                self.used += int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+        if self.used > self.budget:
+            raise BudgetExceeded(self.used, self.budget)
 
 
 @dataclass(frozen=True)
@@ -89,7 +114,9 @@ def run_diagnosis(
     obs_store: ObservationStore,
     bundle: ContextBundle,
     run_config: dict[str, Any],
+    token_budget: int,
 ) -> DiagnoseResult:
+    """超出 token 预算时抛 BudgetExceeded，由调查图升级给人。"""
     agent = create_deep_agent(
         model=model,
         tools=lc_tools(pack, backend),
@@ -100,7 +127,11 @@ def run_diagnosis(
         response_format=ToolStrategy(DiagnosisOutput),
     )
     question = bundle.rendered + "\n\n请诊断上面的问题。需要更多证据时调用工具。"
-    config: RunnableConfig = {**run_config, "recursion_limit": 60}  # type: ignore[typeddict-item]
+    config: RunnableConfig = {
+        **run_config,  # type: ignore[typeddict-item]
+        "recursion_limit": 60,
+        "callbacks": [TokenBudget(token_budget)],
+    }
     out = agent.invoke({"messages": [HumanMessage(question)]}, config=config)
     result: DiagnosisOutput = out["structured_response"]
 

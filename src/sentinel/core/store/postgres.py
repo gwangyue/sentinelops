@@ -58,6 +58,15 @@ class PgStore:
             rows = c.execute("SELECT * FROM investigations ORDER BY created_at DESC LIMIT %s", (limit,)).fetchall()
         return [InvestigationRecord(**r) for r in rows]
 
+    def recent_fingerprints(self, target: str, since: datetime, exclude: str) -> set[str]:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT f->>'fingerprint' AS fp FROM investigations, jsonb_array_elements(findings) AS f "
+                "WHERE target = %s AND created_at >= %s AND id <> %s",
+                (target, since, exclude),
+            ).fetchall()
+        return {r["fp"] for r in rows}
+
     # ---------- 审计 ----------
     def append_audit(
         self,

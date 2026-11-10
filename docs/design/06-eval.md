@@ -215,7 +215,7 @@ flowchart LR
 | **以 git 为准** | `datasets/*.jsonl` 是唯一的真实来源；LangSmith 是它的同步副本 | 数据集的变更可以做代码评审，可以回滚 |
 | **每次同步都打版本标签** | 格式 `ds-YYYYMMDD-n`，用 `update_dataset_tag` 打标签 [3] | 评测必须指定标签，不允许用 `latest`（03 篇 §6.2） |
 | **变更日志** | 每次增删用例，在 `CHANGELOG.md` 里写一行：做了什么、为什么 | 收敛曲线上出现跳变时，能分清是数据集变了还是 Agent 变了 |
-| **split 按场景分配** | `hash(scenario_id) mod 4 == 0` → heldout，其余是 dev | 同一个场景的所有录制都在同一个 split 里，避免泄漏 |
+| **split 按场景分配** | `origin=external_adapted` 的场景一律进 heldout；其余按 `hash(scenario_id) mod 4 == 0` → heldout，否则 dev（2026-11-10 确认：纯 hash 无法满足下面"保留测试集优先使用外部改编的场景"这一条） | 同一个场景的所有录制都在同一个 split 里，避免泄漏；规则写在代码里，不靠起名字来凑比例 |
 | **事故流按 split 分开构造** | dev 事故流只用 dev 用例，heldout 事故流只用 heldout 用例 | 同上 |
 | **保留测试集的使用次数有上限** | 每个里程碑最多跑 1 次，每次都记录在 `datasets/HELDOUT_LOG.md` 里 | 用的次数越多，它就越像开发集。用满 4 次后，用新场景重建保留测试集 |
 | **数据集版本和 Agent 版本一起记录** | 每条 `RunScore` 都同时带有两者（03 篇 §6.3） | 只有两者都相同的结果，才能直接比较 |

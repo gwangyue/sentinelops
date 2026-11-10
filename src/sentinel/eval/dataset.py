@@ -24,8 +24,13 @@ FIXTURES = REPO / "fixtures"
 _NS = uuid.UUID("5e6f1c2a-7d1b-4c3e-9a40-3b1f0e9d2c11")
 
 
-def split_for(scenario_id: str) -> Literal["dev", "heldout"]:
-    """06 §5.2：hash(scenario_id) mod 4 == 0 → heldout。按场景分配，同一场景的所有录制在同一个 split。"""
+def split_for(scenario_id: str, origin: str = "bench") -> Literal["dev", "heldout"]:
+    """06 §5.2：外部改编的场景一律进 heldout（G1）；其余按 hash(scenario_id) mod 4 == 0 → heldout。
+
+    按场景分配，同一场景的所有录制在同一个 split。规则写在代码里，不靠起名字来凑比例。
+    """
+    if origin == "external_adapted":
+        return "heldout"
     return "heldout" if int(hashlib.sha256(scenario_id.encode()).hexdigest(), 16) % 4 == 0 else "dev"
 
 

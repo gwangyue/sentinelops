@@ -13,7 +13,7 @@ from typing import Any, Literal, Protocol
 from sentinel.contracts import AgentVersion, AuditEvent, Observation
 
 GENESIS_HASH = "0" * 64
-InvestigationStatus = Literal["running", "healthy", "diagnosed", "escalated", "failed"]
+InvestigationStatus = Literal["running", "healthy", "deduplicated", "diagnosed", "escalated", "failed"]
 
 
 @dataclass
@@ -50,6 +50,7 @@ class Store(Protocol):
     def update_investigation(self, inv_id: str, **fields: Any) -> None: ...
     def get_investigation(self, inv_id: str) -> InvestigationRecord | None: ...
     def list_investigations(self, limit: int = 20) -> list[InvestigationRecord]: ...
+    def recent_fingerprints(self, target: str, since: datetime, exclude: str) -> set[str]: ...
 
     # 审计：只追加。prev_hash 由存储层在同一个事务里计算，调用方不能自己指定
     def append_audit(

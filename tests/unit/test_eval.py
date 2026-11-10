@@ -203,6 +203,8 @@ def test_majority_baseline() -> None:
 def test_split_is_deterministic_per_scenario() -> None:
     assert ds.split_for("es.disk_watermark.single") == "dev"
     assert ds.split_for("es.network_partition.single") == "heldout"
+    # G1：外部改编的场景一律进 heldout，即使 hash 会把它分到 dev
+    assert ds.split_for("es.disk_watermark.single", "external_adapted") == "heldout"
     assert ds.example_uuid("a#r1") == ds.example_uuid("a#r1") and uuid.UUID(ds.example_uuid("a#r1"))
 
 

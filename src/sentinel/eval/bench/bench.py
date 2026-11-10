@@ -193,7 +193,7 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
         ex = EvalExample(
             id=f"{scenario_id}#r{k}",
             scenario_id=scenario_id,
-            split=split_for(scenario_id),
+            split=split_for(scenario_id, spec.origin),
             inputs=ExampleInputs(
                 trigger={"kind": "patrol", "target": TARGET}, fixture_ref=str(rel), memory_snapshot=None
             ),

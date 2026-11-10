@@ -2,6 +2,10 @@
 
 - 状态：已接受。型号在技术验证中确定（2026-11-09）：诊断 `gemini-3.7-flash`（version 3.7-flash-08-2026），评审 `gemini-3.1-pro-preview`（version 3.1-pro-preview-01-2026），embedding `gemini-embedding-001`（768 维）。`*-latest` 是别名，按 G2 禁止使用
 - 注意：评审模型 `gemini-3.1-pro-preview` 是 preview 版，可能被更新。评审不参与上线决策（只给失败归类打语义标签），出问题时改配置即可，不影响诊断版本的比较。思考 token 计入 `max_output_tokens`，`thinking_budget` 要作为模型参数写进 AgentVersion（S3 实测）
+- 2026-11-10 复核（M2 开始前）：`gemini-3.7-flash` 不在官方价格页上（只有同价的 3.6-flash 和 3.8-flash），费用只能按相邻版本估算。评估过换型号：
+  - `gemini-3.8-flash` 的 version 字段是"3.0"，没有带日期的发布号，无法确认是固定版本（G2）；
+  - `gemini-3.6-flash` 在价格页上，版本号带日期，但比 3.7 早一个小版本。
+  决定**保持 3.7-flash**，M1 的结果直接作为 M2 的起点。`config/pricing.yaml` 里的单价标为估算。如果 3.7 被下线，再按 06 §4.6 的"版本退役"处理。
 - 相关：01 篇 §3.4、06 篇 §6.1
 
 ## 背景
