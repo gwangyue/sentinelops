@@ -16,7 +16,10 @@ def embed(texts: Sequence[str]) -> list[list[float]]:
     guard_real_call("embedding")
     spec = load_models_config().purposes["embedding"]
     dims = spec.params().get("output_dimensionality")
-    r = genai.Client().models.embed_content(
+    # 客户端要先存进变量：写成 genai.Client().models... 时，临时对象可能在请求途中被回收，
+    # 它关闭底层 HTTP 连接后请求报 "client has been closed"（M2 D6 实测）
+    client = genai.Client()
+    r = client.models.embed_content(
         model=spec.model, contents=list(texts), config=types.EmbedContentConfig(output_dimensionality=dims)
     )
     return [list(e.values or []) for e in r.embeddings or []]
