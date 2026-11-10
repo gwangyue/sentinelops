@@ -1,0 +1,14 @@
+# golden-demo.md 的 10 个步骤在哪个里程碑打开（规则 2）。
+# opened_through：已经结束的最近一个里程碑；它和它之前的步骤都要求通过。每个里程碑结束时改这一行（08 §6.6）。
+opened_through: none   # none | M1 | M2 | M3 | M4
+steps:
+  - { n: 1,  title: "集群健康，巡检不调用 LLM",  command: "sentinel patrol es-target",                        open_at: M1 }
+  - { n: 2,  title: "注入故障",                  command: "sentinel bench inject es.disk_watermark.single",   open_at: M1 }
+  - { n: 3,  title: "诊断：有证据、有排序",      command: "sentinel investigations show <inv>",               open_at: M1 }
+  - { n: 4,  title: "上下文报告",                command: "sentinel investigations context <inv>",            open_at: M2 }
+  - { n: 5,  title: "修复方案",                  command: "（第 3 步的输出）",                                open_at: M3 }
+  - { n: 6,  title: "审批，然后执行、验证",      command: "sentinel approvals approve <apv> --as approver",   open_at: M3 }
+  - { n: 7,  title: "确认根因，写入记忆",        command: "sentinel investigations confirm <inv> --root-cause H1", open_at: M3 }
+  - { n: 8,  title: "再次注入同类故障，记忆生效", command: "重复第 2、3 步",                                   open_at: M3 }
+  - { n: 9,  title: "收敛曲线和记忆增益",        command: "sentinel eval curve --pack es",                    open_at: M2 }
+  - { n: 10, title: "治理周报和审计校验",        command: "sentinel report weekly · sentinel audit verify",   open_at: M4 }
