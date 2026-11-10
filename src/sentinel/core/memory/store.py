@@ -4,6 +4,8 @@
 - embedding：向量（03 §6.4 明确规定不进契约）；
 - harm_count：记忆伤害次数（05 §3.7 的失效条件要用；契约里没有这个字段，加字段要改契约，所以先放在索引里）。
 fingerprint_tokens 由 symptom_fingerprint 推出，只为了能做 terms 查询。
+ES 9 默认不在 _source 里返回 dense_vector（M2 D8 实测 9.5.3），读记忆时要显式要回向量：
+否则合并、易混淆标记、反馈这些"读出来改了再写回"的操作会把向量写成空数组，ES 拒绝写入。
 
 负责：建索引、读写、三路召回各自的查询（都带 namespace 和 invalidated 过滤）。
 不负责：融合和精排（retrieve.py）、写入规则（write.py）。
@@ -90,17 +92,24 @@ class EsMemoryStore:
         self._c.delete(f"/{self.index}")
 
     def put(self, m: StoredMemory) -> None:
-        self._c.put(f"/{self.index}/_doc/{m.record.id}?refresh=true", json=_doc(m)).raise_for_status()
+        r = self._c.put(f"/{self.index}/_doc/{m.record.id}?refresh=true", json=_doc(m))
+        if r.status_code >= 400:
+            # 带上 ES 的错误原因：只看状态码查不出是哪个字段出的问题
+            raise RuntimeError(f"写入记忆 {m.record.id} 失败（{r.status_code}）：{r.text[:500]}")
 
     def get(self, memory_id: str) -> StoredMemory | None:
-        r = self._c.get(f"/{self.index}/_doc/{memory_id}")
+        r = self._c.get(f"/{self.index}/_doc/{memory_id}", params={"_source_exclude_vectors": "false"})
         return _from_doc(r.json()["_source"]) if r.status_code == 200 else None
 
     def all(self, namespace: str) -> list[StoredMemory]:
         # 记忆的规模是几十到几百条：合并时全量比较指纹就够了。TODO(edge)：规模变大后改成先用指纹召回再比较
         r = self._c.post(
             f"/{self.index}/_search",
-            json={"size": 1000, "query": {"bool": {"filter": [{"term": {"namespace": namespace}}]}}},
+            json={
+                "size": 1000,
+                "_source": {"exclude_vectors": False},
+                "query": {"bool": {"filter": [{"term": {"namespace": namespace}}]}},
+            },
         )
         return [_from_doc(h["_source"]) for h in r.json().get("hits", {}).get("hits", [])]
 
