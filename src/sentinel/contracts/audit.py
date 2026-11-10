@@ -17,6 +17,7 @@ KNOWN_EVENT_TYPES = frozenset(
         "investigation.escalated",
         "finding.detected",
         "finding.deduplicated",
+        "patrol.healthy",  # 巡检没有发现问题（ADR-011；golden-demo 第 1 步）
         "diagnosis.completed",
         "plan.proposed",
         "plan.rejected_unsafe",

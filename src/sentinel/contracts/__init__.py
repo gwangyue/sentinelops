@@ -19,6 +19,7 @@ from sentinel.contracts.pack import (
     FactBuilderDecl,
     KnowledgeDecl,
     PackManifest,
+    RootCauseDecl,
     ToolDecl,
 )
 from sentinel.contracts.plan import RemediationPlan
@@ -55,6 +56,7 @@ __all__ = [
     "Observation",
     "PackManifest",
     "RemediationPlan",
+    "RootCauseDecl",
     "RunScore",
     "ScenarioSpec",
     "SymptomWait",

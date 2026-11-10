@@ -38,6 +38,13 @@ class KnowledgeDecl(Contract):
     path: str
 
 
+class RootCauseDecl(Contract):
+    """专家包认识的一种根因（ADR-011）。诊断的 root_cause_label 只能从这里选，才能和场景的真实答案比对。"""
+
+    label: str  # "es.disk_high_watermark"
+    description: str  # 给模型看的一句话说明
+
+
 class PackManifest(Contract):
     schema_version: int = 1
     pack: str  # 领域名，全局唯一
@@ -50,3 +57,4 @@ class PackManifest(Contract):
     fact_builders: list[FactBuilderDecl] = []
     knowledge: list[KnowledgeDecl] = []
     scenarios: str = "scenarios/"
+    root_causes: list[RootCauseDecl] = []  # 可选，默认为空：旧的清单照样能读（ADR-011）

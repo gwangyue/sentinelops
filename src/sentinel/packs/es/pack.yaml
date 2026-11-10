@@ -30,3 +30,10 @@ fact_builders:
   - entry: "sentinel.packs.es.facts:cluster_facts"
 knowledge: []                    # runbook 在 M2 D5 加
 scenarios: scenarios/
+# 根因标签（ADR-011）：诊断的 root_cause_label 只能从这里选，场景的真实答案也用这些标签（06 §5.3）
+root_causes:
+  - { label: es.disk_high_watermark, description: "数据节点磁盘使用率超过高水位，新分片或副本无法分配到该节点" }
+  - { label: es.node_unavailable,    description: "节点宕机或网络分区，节点离开集群，它上面的分片变成未分配（只读 API 无法区分两者）" }
+  - { label: es.allocation_disabled, description: "集群设置关闭或限制了分片分配（cluster.routing.allocation.enable 等）" }
+  - { label: es.shard_limit_reached, description: "活跃分片数达到 cluster.max_shards_per_node × 数据节点数的上限，新建索引失败" }
+  - { label: es.unknown,             description: "证据不支持以上任何一种" }

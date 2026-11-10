@@ -115,6 +115,9 @@ knowledge:                     # runbook 和已知问题，会被索引进 es-me
   - path: knowledge/runbooks/
   - path: knowledge/known_issues_9x.md
 scenarios: scenarios/          # 故障场景定义，详见 6.1
+root_causes:                   # 可选（ADR-011）：专家包认识的根因。诊断的 root_cause_label 只能从这里选，表外的记为 None
+  - { label: es.disk_high_watermark, description: "数据节点磁盘超过高水位，分片无法分配到该节点" }
+  - { label: es.unknown, description: "以上都不是" }
 ```
 
 **约束**：
@@ -328,6 +331,7 @@ class AuditEvent(BaseModel):
 |---|---|
 | `investigation.started` / `.closed` / `.escalated` | 调查开始、结束、升级 |
 | `finding.detected` / `.deduplicated` | 检测器发现问题、被去重 |
+| `patrol.healthy` | 巡检没有发现任何问题（不调用 LLM，ADR-011） |
 | `diagnosis.completed` | 诊断完成（附带假设 ID 和置信度） |
 | `plan.proposed` / `.rejected_unsafe` | 方案提出、不安全提议被拦截 |
 | `approval.requested` / `.decided` / `.expired` | 审批的各个阶段 |
