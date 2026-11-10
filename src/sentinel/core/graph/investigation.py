@@ -17,6 +17,9 @@ from langgraph.graph.state import CompiledStateGraph
 
 from sentinel.contracts import AgentVersion, ContextBundle, FactSheet, Finding
 from sentinel.core.context.build import build_context
+from sentinel.core.context.changes import Change, ReplaySnapshots, StoreSnapshots, collect_changes
+from sentinel.core.context.knowledge_layer import KnowledgeRetriever, NoKnowledge
+from sentinel.core.context.memory_layer import MemoryProvider, NoMemory
 from sentinel.core.detect import run_detect
 from sentinel.core.diagnosis.agent import BudgetExceeded, run_diagnosis
 from sentinel.core.diagnosis.evidence import check_evidence, support_rate
@@ -24,7 +27,7 @@ from sentinel.core.llm.chat import run_tags
 from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack
 from sentinel.core.store import InvestigationRecord, Store
-from sentinel.core.toolbackend import ToolBackend
+from sentinel.core.toolbackend import Mode, ToolBackend
 
 ACTOR = "agent"
 # 02 §2：同一个指纹 30 分钟内只调查一次，否则同一个问题每次巡检都会触发一次调查
@@ -44,6 +47,7 @@ class InvState(TypedDict, total=False):
     status: str
     escalate_reason: str | None
     model_calls: int
+    changes: list[dict[str, Any]]  # L3：和上一次快照比较得到的变更
     deduplicated: bool  # 本次的问题事件 30 分钟内都已经调查过
 
 
@@ -59,6 +63,8 @@ class Deps:
     current_version: Callable[[], AgentVersion]  # 当前行为对应的已冻结版本，没冻结就抛 FreezeError
     load_env: Callable[[str], dict[str, Any]]
     policy: dict[str, Any]
+    knowledge: KnowledgeRetriever = field(default_factory=NoKnowledge)  # L4（04 §3.5）
+    memory: MemoryProvider = field(default_factory=NoMemory)  # L5 接口；记忆服务在 D7–D8
     _backends: dict[str, ToolBackend] = field(default_factory=dict)
 
     def backend(self, pack: LoadedPack, inv_id: str) -> ToolBackend:
@@ -107,13 +113,19 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         findings = [f.model_dump(mode="json") for f in res.findings]
         sheets = [s.model_dump(mode="json") for s in res.fact_sheets]
         deps.store.update_investigation(state["inv_id"], findings=findings, fact_sheets=sheets)
+        changes = _changes(deps, pack, state["target"], deps.backend(pack, state["inv_id"]))
         seen = deps.store.recent_fingerprints(state["target"], datetime.now(UTC) - DEDUP_WINDOW, state["inv_id"])
         fresh = [f for f in res.findings if f.fingerprint not in seen]
         for f in res.findings:
             if f.fingerprint in seen:
                 audit(state, "finding.deduplicated", {"finding": f.id, "fingerprint": f.fingerprint})
         # 只要有一个新问题就照常诊断（上下文里仍然带上全部问题事件）；全部重复才跳过诊断
-        return {"findings": findings, "fact_sheets": sheets, "deduplicated": bool(res.findings) and not fresh}
+        return {
+            "findings": findings,
+            "fact_sheets": sheets,
+            "deduplicated": bool(res.findings) and not fresh,
+            "changes": changes,
+        }
 
     def deduplicated(state: InvState) -> InvState:
         deps.store.update_investigation(state["inv_id"], status="deduplicated")
@@ -134,12 +146,29 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         return {}
 
     def context(state: InvState) -> InvState:
+        findings = [Finding.model_validate(f) for f in state["findings"]]
+        sheets = [FactSheet.model_validate(s) for s in state["fact_sheets"]]
+        layers = deps.policy.get("layers", {})
+        # L4：按检测器过滤，用问题事件的说明做查询（04 §3.5）
+        knowledge = (
+            deps.knowledge.search(
+                sorted({f.detector for f in findings}),
+                " ".join(f.summary for f in findings),
+                deps.policy["knowledge"]["top_k"],
+            )
+            if layers.get("L4")
+            else []
+        )
+        memories = deps.memory.similar(findings, sheets, deps.policy["memory"]["top_k"]) if layers.get("L5") else []
         bundle = build_context(
             state["inv_id"],
-            [Finding.model_validate(f) for f in state["findings"]],
-            [FactSheet.model_validate(s) for s in state["fact_sheets"]],
+            findings,
+            sheets,
             deps.load_env(state["target"]),
             deps.policy,
+            changes=[Change(**{**c, "since": datetime.fromisoformat(c["since"])}) for c in state.get("changes", [])],
+            knowledge=knowledge,
+            memories=memories,
         )
         deps.store.update_investigation(state["inv_id"], context_bundle=bundle.model_dump(mode="json"))
         return {"bundle": bundle.model_dump(mode="json")}
@@ -157,6 +186,7 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
                 bundle=bundle,
                 run_config=run_tags("diagnosis", state["agent_version"], state["inv_id"]),
                 token_budget=budget,
+                compaction={**deps.policy["compaction"], "l2_max": deps.policy["budgets"]["L2_max"]},
             )
         except BudgetExceeded as e:
             # 中途中止：没有诊断结果，直接升级给人（02 §1；07 §3 T8）
@@ -175,6 +205,12 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
                 "steps": d.steps,
                 "tokens_in": d.tokens_in,
                 "tokens_out": d.tokens_out,
+                # L2 压缩记录（04 §3.11）：ContextBundle 只描述预组装的部分，压缩发生在诊断过程中，所以记在这里
+                "compaction": {
+                    "compacted": res.compaction.compacted,
+                    "tokens_before": res.compaction.tokens_before,
+                    "tokens_after": res.compaction.tokens_after,
+                },
             },
         )
         reason = _escalation_reason(d.escalate, d.escalate_reason, [h.confidence for h in d.hypotheses], deps.policy)
@@ -232,3 +268,26 @@ def _escalation_reason(escalate: bool, why: str | None, confidences: list[float]
     if confidences[0] < policy["escalation"]["min_confidence"]:
         return f"low_confidence: H1 置信度 {confidences[0]:.2f} 低于 {policy['escalation']['min_confidence']}"
     return None
+
+
+def _changes(deps: Deps, pack: LoadedPack, target: str, backend: ToolBackend) -> list[dict[str, Any]]:
+    """L3（04 §3.4）：读快照工具的当前值，和上一次快照比较；线上巡检时把这次的快照存起来，给下一次用。
+
+    回放时，上一次快照来自录制里 phase=before 的记录，并且不写快照（评测不能改变存储的状态）。
+    """
+    if not deps.policy.get("layers", {}).get("L3"):
+        return []
+    now = datetime.now(UTC)
+    current = {}
+    for tool in deps.policy["changes"]["snapshot_tools"].get(pack.manifest.pack, []):
+        r = backend.call(tool)
+        if r.ok:
+            current[tool] = (r.raw, r.observation_id)
+    replay = backend.mode is Mode.REPLAY
+    source = ReplaySnapshots(backend.replay_before) if replay else StoreSnapshots(deps.store, target)
+    # 回放时"现在"取录制的时间之后：快照和故障状态只差几分钟，不能用今天的时间去算 24 小时窗口
+    changes = collect_changes(current, source, now, deps.policy["changes"]["window_hours"] if not replay else 1e9)
+    if not replay:
+        for tool, (raw, _) in current.items():
+            deps.store.save_snapshot(target, tool, raw, now)
+    return [{**c.__dict__, "since": c.since.isoformat()} for c in changes]

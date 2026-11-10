@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from sentinel.contracts import ContextBundle, Diagnosis, Hypothesis, RootCauseDecl
 from sentinel.core.context.build import wrap
+from sentinel.core.diagnosis.compaction import CompactionRecord, L2Compaction
 from sentinel.core.diagnosis.obs_backend import ObsBackend
 from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack
@@ -73,6 +74,7 @@ class TokenBudget(BaseCallbackHandler):
 class DiagnoseResult:
     diagnosis: Diagnosis
     model_calls: int
+    compaction: CompactionRecord  # 写进上下文报告（04 §3.11）；没压缩时 compacted 为空
 
 
 def render_prompt(root_causes: Sequence[RootCauseDecl]) -> str:
@@ -115,10 +117,14 @@ def run_diagnosis(
     bundle: ContextBundle,
     run_config: dict[str, Any],
     token_budget: int,
+    compaction: dict[str, Any] | None = None,
 ) -> DiagnoseResult:
     """超出 token 预算时抛 BudgetExceeded，由调查图升级给人。"""
+    c = compaction or {}
+    l2 = L2Compaction(int(c.get("l2_max", 20000)), float(c.get("trigger_ratio", 0.7)), int(c.get("keep_recent", 3)))
     agent = create_deep_agent(
         model=model,
+        middleware=[l2],
         tools=lc_tools(pack, backend),
         system_prompt=render_prompt(pack.manifest.root_causes),
         backend=CompositeBackend(
@@ -152,4 +158,4 @@ def run_diagnosis(
         tokens_in=sum(u["input_tokens"] for u in usage),
         tokens_out=sum(u["output_tokens"] for u in usage),
     )
-    return DiagnoseResult(diagnosis, model_calls=len(ai))
+    return DiagnoseResult(diagnosis, model_calls=len(ai), compaction=l2.record)

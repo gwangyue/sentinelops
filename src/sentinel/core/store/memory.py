@@ -16,6 +16,7 @@ class MemoryStore:
         self.audit: list[AuditEvent] = []
         self.versions: list[AgentVersion] = []
         self.obs: list[Observation] = []
+        self.snapshots: dict[tuple[str, str], tuple[Any, datetime]] = {}
 
     def init(self) -> None:
         pass
@@ -77,6 +78,12 @@ class MemoryStore:
 
     def list_versions(self) -> list[AgentVersion]:
         return sorted(self.versions, key=lambda v: v.seq)
+
+    def latest_snapshot(self, target: str, tool: str) -> tuple[Any, datetime] | None:
+        return self.snapshots.get((target, tool))
+
+    def save_snapshot(self, target: str, tool: str, raw: Any, ts: datetime) -> None:
+        self.snapshots[(target, tool)] = (raw, ts)
 
     def add_observation(self, obs: Observation) -> None:
         self.obs.append(obs)

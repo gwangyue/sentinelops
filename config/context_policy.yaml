@@ -1,9 +1,17 @@
 # 上下文组装策略（04 §3.10）。整份内容进入 AgentVersion.components.context_policy，改任何一项都要重新冻结。
 # M1 只用到 L0、L1；L3/L4/L5 和压缩在 M2 打开。预算数字【待定，M2 用实验调】。
 version: 1
-budgets: { prefix: 3000, L0: 500, L1: 2000, L5: 1500, L3: 1000, L4: 1500, L2_max: 20000 }
+# 每层是否打开：每打开一层就冻结一个新版本，和上一个版本配对比较（06 §4.3"每个版本只做一个足够大的改动"）
+layers: { L3: false, L4: false, L5: false }
+# preassembled_total：预组装（L0+L1+L5+L3+L4）的总预算，超出时按 degrade_order 降级（04 §3.7）；也是 E3 实验的旋钮
+budgets: { prefix: 3000, L0: 500, L1: 2000, L5: 1500, L3: 1000, L4: 1500, L2_max: 20000, preassembled_total: 6500 }
 degrade_order: [L4, L3, L5, L1_related]
 facts: { include_related_objects: true, max_related_objects: 5 }
+# L3：和上一次快照比较的工具（只放配置类信息），窗口 24 小时（04 §3.4）
+changes: { window_hours: 24, snapshot_tools: { es: [es.cluster_settings, es.nodes_info, es.index_templates] } }
+knowledge: { top_k: 2 }             # L4（04 §3.5）
+memory: { top_k: 3 }                # L5 的条数；检索和阈值在 memory_policy 里（D7–D8）
+compaction: { trigger_ratio: 0.7, keep_recent: 3 }   # L2 压缩（04 §3.11，G3）
 untrusted: { wrap: true, escape_tags: true }
 # 诊断结果的升级规则（02 §1"置信度低 → 升级给人"）
 escalation: { min_confidence: 0.5 }

@@ -18,9 +18,13 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from ulid import ULID
 
 from sentinel.contracts import AgentVersion
+from sentinel.core.context.knowledge_layer import KnowledgeRetriever, NoKnowledge
 from sentinel.core.detect import load_env
 from sentinel.core.graph.investigation import Deps, InvState, build_graph
+from sentinel.core.knowledge.corpus import knowledge_hash
+from sentinel.core.knowledge.es_index import EsKnowledge
 from sentinel.core.llm.chat import chat_model
+from sentinel.core.llm.embed import embed
 from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack, load_pack
 from sentinel.core.store import Store, open_store
@@ -52,10 +56,16 @@ def make_deps(
 ) -> Deps:
     """组装 Deps 的唯一位置。M2 加上下文层和记忆服务时只改这里，线上和评测一起生效。"""
     packs = load_packs()
+    policy = load_context_policy()
 
     def make_backend(pack: LoadedPack, inv_id: str) -> ToolBackend:
         return open_backend(pack, inv_id, mode, obs_store, fixture)
 
+    knowledge: KnowledgeRetriever = NoKnowledge()
+    if policy.get("layers", {}).get("L4"):
+        # 索引和当前 runbook 不一致就直接报错，不悄悄用旧知识（EsKnowledge 构造时校验）
+        # TODO(edge): 多个专家包时按问题事件的领域选知识库
+        knowledge = EsKnowledge("es", knowledge_hash(packs["es"]), embed)
     return Deps(
         store=store,
         obs_store=obs_store,
@@ -64,7 +74,8 @@ def make_deps(
         make_model=make_model,
         current_version=version,
         load_env=load_env,
-        policy=load_context_policy(),
+        policy=policy,
+        knowledge=knowledge,
     )
 
 

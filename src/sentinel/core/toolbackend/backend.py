@@ -91,6 +91,10 @@ class ToolBackend:
         self._memo: dict[str, ToolResult] = {}
         self.phase = phase  # 只影响 Record 模式写进录制的 phase 字段
 
+    def replay_before(self, tool: str, args: dict[str, Any]) -> dict[str, Any] | None:
+        """回放模式下，录制里注入前的快照（L3 变更层用）；非回放模式返回 None。"""
+        return self._replay.before(tool, args) if self._replay is not None else None
+
     def call(self, tool: str, args: Mapping[str, Any] | None = None) -> ToolResult:
         spec = self.tools.get(tool)
         if spec is None:

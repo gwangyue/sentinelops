@@ -81,6 +81,28 @@ def step2_inject() -> tuple[Status, str]:
     return Status.PASS, f"（{last['example_id']}：{last['symptom_after_s']} 秒）"
 
 
+def step4_context_report() -> tuple[Status, str]:
+    """ContextBundle 能通过 schema 校验；L0 和异常事实没有被删除；各层 token 总数不超过预算（golden-demo 第 4 步）。"""
+    from tests.flows.scripts import diagnose_script
+
+    from sentinel.contracts import ContextBundle
+    from sentinel.core.versioning.components import load_context_policy
+
+    h = _harness("disk_watermark", diagnose_script())
+    s = h.run()
+    b = ContextBundle.model_validate(s["bundle"])
+    if any(not i.included for i in b.items if i.layer == "L0"):
+        return Status.FAIL, "L0 问题事件被删除了"
+    abnormal = {x["observation_id"] for fs in s["fact_sheets"] for x in fs["facts"] if x["status"] == "abnormal"}
+    if any(not i.included for i in b.items if i.layer == "L1" and i.ref in abnormal):
+        return Status.FAIL, "异常事实被删除了"
+    budgets = load_context_policy()["budgets"]
+    over = [k for k, v in b.tokens_by_layer.items() if v > budgets[k]]
+    if over or sum(b.tokens_by_layer.values()) > budgets["preassembled_total"]:
+        return Status.FAIL, f"超出预算：{over or '总量'}"
+    return Status.PASS, ""
+
+
 SCENARIO = Path(__file__).resolve().parents[1] / "src/sentinel/packs/es/scenarios/disk_watermark.single.yaml"
 
 # 步骤编号 → 检查函数。实现某一步的那天，在这里换成真正的检查。
@@ -88,6 +110,7 @@ CHECKS: dict[int, Callable[[], tuple[Status, str]]] = {n: _not_implemented for n
 CHECKS[1] = step1_patrol_healthy
 CHECKS[2] = step2_inject
 CHECKS[3] = step3_diagnosis
+CHECKS[4] = step4_context_report
 
 
 def run(force_all: bool) -> int:
