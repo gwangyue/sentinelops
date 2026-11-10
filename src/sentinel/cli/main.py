@@ -310,9 +310,11 @@ def eval_compare(
     dataset_tag: Annotated[
         str | None, typer.Option(help="数据集版本标签（必填）：两边的结果必须来自同一个标签")
     ] = None,
+    by: Annotated[str | None, typer.Option(help="分组：difficulty（06 §6.2；08 §7 要求按难度分组报告）")] = None,
 ) -> None:
     """配对比较 B − A 的 top1：点估计、按场景聚类的 bootstrap 95% 区间、判断（06 §4.2）。"""
     from sentinel.eval import results
+    from sentinel.eval.dataset import load_examples
     from sentinel.eval.guards import require_dataset_tag
     from sentinel.eval.stats.bootstrap import compare
 
@@ -321,10 +323,25 @@ def eval_compare(
     def load(name: str) -> list:  # type: ignore[type-arg]
         return results.load(results.result_file(name.replace("baseline:", "baseline-"), tag, split))
 
-    c = compare(load(a), load(b))
-    typer.echo(f"{b} − {a}（{tag} / {split}，主指标 top1）")
-    typer.echo(f"  {a} {c.a_score:.2f}   {b} {c.b_score:.2f}")
-    typer.echo(f"  差值 {c.point:+.2f}   95% 区间 [{c.low:+.2f}, {c.high:+.2f}]   判断：{c.verdict}")
-    typer.echo(f"  场景 {c.n_scenarios} 个，用例 {c.n_examples} 个（区间按场景重采样，06 §4.2）")
-    if c.excluded_replay_miss:
-        typer.echo(f"  录制未覆盖、已剔除：{', '.join(c.excluded_replay_miss)}")
+    ra, rb = load(a), load(b)
+    groups: dict[str, set[str] | None] = {"全部": None}
+    if by == "difficulty":
+        # RunScore 里没有难度，按用例 ID 从 git 里的数据集查（数据集以 git 为准，06 §5.2）
+        diff = {e.id: e.metadata.difficulty for e in load_examples("es")}
+        for d in ("single", "distractor", "compound"):
+            groups[d] = {eid for eid, v in diff.items() if v == d}
+    elif by is not None:
+        raise typer.BadParameter("--by 目前只支持 difficulty")
+    typer.echo(f"{b} − {a}（{tag} / {split}，主指标 top1，区间按场景重采样，06 §4.2）")
+    for name, ids in groups.items():
+        sa = [x for x in ra if ids is None or x.example_id in ids]
+        sb = [x for x in rb if ids is None or x.example_id in ids]
+        if not sa or not sb:
+            continue
+        c = compare(sa, sb)
+        typer.echo(
+            f"  [{name}] {a} {c.a_score:.2f}  {b} {c.b_score:.2f}  差值 {c.point:+.2f}  "
+            f"95% 区间 [{c.low:+.2f}, {c.high:+.2f}]  {c.verdict}  （{c.n_scenarios} 个场景，{c.n_examples} 个用例）"
+        )
+        if c.excluded_replay_miss:
+            typer.echo(f"      录制未覆盖、已剔除：{', '.join(c.excluded_replay_miss)}")

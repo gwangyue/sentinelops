@@ -1,0 +1,17 @@
+# 外部改编（G1）：Elastic 官方 Troubleshoot shard capacity health issues 文档："Cluster is close to reaching the
+# configured maximum number of shards for data nodes"。
+# 改编：把 cluster.max_shards_per_node 调到"当前用量约占 93%"，还没到上限，但已经接近（和自建场景的"刚好到上限"不同）。
+schema_version: 1
+id: es.shard_limit.ext_capacity_warning
+pack: es
+fault: { kind: script, ref: chaos/es/shard_limit.sh, params: { target_ratio: 0.93 } }
+ground_truth:
+  root_cause_label: es.shard_limit_reached
+  acceptable_actions: [es.raise_shard_limit_temporarily]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_settings]
+  key_facts: [cluster.shard_usage_ratio]
+difficulty: single
+origin: external_adapted
+source_ref: "Elastic 官方文档 Troubleshoot shard capacity health issues：https://www.elastic.co/docs/troubleshoot/elasticsearch/troubleshooting-shards-capacity-issues （2026-11-10 读取）"
+symptom_wait: { detector: es.shard_limit, timeout_s: 120 }

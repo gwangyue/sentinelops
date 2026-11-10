@@ -6,7 +6,7 @@ id: es.allocation_disabled.compound
 pack: es
 fault: { kind: script, ref: chaos/es/allocation_disabled.sh, params: { wait_nodes: 3 } }
 distractors:
-  - { kind: script, ref: chaos/es/distractor_disk_fill.sh, params: {} }
+  - { kind: script, ref: chaos/es/fill_node_disk.sh, params: {} }
 ground_truth:
   root_cause_label: es.allocation_disabled
   acceptable_actions: [es.enable_allocation]

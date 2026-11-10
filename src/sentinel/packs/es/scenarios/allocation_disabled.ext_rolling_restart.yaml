@@ -1,0 +1,17 @@
+# 外部改编（G1）：Elastic 官方滚动重启流程的第 1 步把分配设为 primaries，第 7 步在节点重新加入后再去掉这个设置。
+# 改编：做完第 1 步、重启 data-2、节点回来之后，"忘了"做第 7 步。主分片都在，副本全部未分配，集群一直是 yellow。
+# 和自建的 allocation_disabled.single 不同：值是 primaries 而不是 none，主分片不受影响。
+schema_version: 1
+id: es.allocation_disabled.ext_rolling_restart
+pack: es
+fault: { kind: script, ref: chaos/es/allocation_disabled.sh, params: { enable_value: primaries, wait_nodes: 3 } }
+ground_truth:
+  root_cause_label: es.allocation_disabled
+  acceptable_actions: [es.enable_allocation]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_settings]
+  key_facts: [cluster.unassigned_shards]
+difficulty: single
+origin: external_adapted
+source_ref: "Elastic 官方文档 Full Cluster restart and rolling restart procedures（步骤 1 与步骤 7）：https://www.elastic.co/docs/deploy-manage/maintenance/start-stop-services/full-cluster-restart-rolling-restart-procedures （2026-11-10 读取）"
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 150 }

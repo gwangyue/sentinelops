@@ -1,0 +1,17 @@
+# 外部改编（G1）：Elastic 官方 Watermark errors 文档里的 flood stage 情形：磁盘超过 95%，
+# 该节点上有分片的所有索引被加上 index.blocks.read_only_allow_delete，写入返回 429 cluster_block_exception。
+# 改编：把 data-2 的数据盘填到 96%，不建新索引（和自建场景不同：症状是只读块，不一定有未分配分片）。
+schema_version: 1
+id: es.disk_watermark.ext_flood_stage
+pack: es
+fault: { kind: script, ref: chaos/es/fill_node_disk.sh, params: { disk_pod: es-target-es-data-2, disk_pct: 96, settle_s: 40 } }
+ground_truth:
+  root_cause_label: es.disk_high_watermark
+  acceptable_actions: [es.relocate_shards, es.raise_watermark_temporarily]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cat_allocation]
+  key_facts: [node.disk_used_pct]
+difficulty: single
+origin: external_adapted
+source_ref: "Elastic 官方文档 Watermark errors（flood-stage watermark 一节）：https://www.elastic.co/docs/troubleshoot/elasticsearch/fix-watermark-errors （2026-11-10 读取）"
+symptom_wait: { detector: es.disk_watermark, timeout_s: 120 }

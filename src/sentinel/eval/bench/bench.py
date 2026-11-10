@@ -10,6 +10,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -51,15 +52,28 @@ class BenchError(RuntimeError):
     pass
 
 
-def run_fault(fault: FaultRef, action: str) -> None:
+def run_fault(fault: FaultRef, action: str, attempts: int = 1) -> None:
+    """执行故障脚本或 Chaos Mesh 模板。失败时把脚本的 stderr 带进错误信息（M2 录制时撤销失败却看不到原因）。"""
     path = DEPLOY / fault.ref
     if fault.kind == "chaos":
         verb = "apply" if action == "inject" else "delete"
         extra = [] if verb == "apply" else ["--ignore-not-found"]
-        subprocess.run(["kubectl", "--context", CTX, verb, "-f", str(path), *extra], check=True, capture_output=True)
+        cmd = ["kubectl", "--context", CTX, verb, "-f", str(path), *extra]
     else:
-        env = {**os.environ, **{k.upper(): str(v) for k, v in fault.params.items()}}
-        subprocess.run([str(path), action], check=True, env=env, capture_output=True)
+        cmd = [str(path), action]
+    env = {**os.environ, **{k.upper(): str(v) for k, v in fault.params.items()}}
+    for i in range(attempts):
+        r = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        if r.returncode == 0:
+            return
+        if i < attempts - 1:
+            # 打出来：重试掩盖了问题时，至少日志里看得到原因
+            print(
+                f"[bench] {fault.ref} {action} 第 {i + 1} 次失败，{POLL_S} 秒后重试：{(r.stderr or r.stdout).strip()[-200:]}",
+                file=sys.stderr,
+            )
+            time.sleep(POLL_S)
+    raise BenchError(f"{fault.ref} {action} 失败（exit {r.returncode}）：{(r.stderr or r.stdout).strip()[-500:]}")
 
 
 def inject_all(spec: ScenarioSpec) -> None:
@@ -74,9 +88,10 @@ def revert_all(spec: ScenarioSpec) -> None:
     errors = []
     for f in [spec.fault, *reversed(spec.distractors)]:
         try:
-            run_fault(f, "revert")
-        except subprocess.CalledProcessError as e:
-            errors.append(f"{f.ref}: {e}")
+            # 撤销要重试：故障刚撤掉时集群可能还在恢复（选主、节点重新加入），一次失败就放弃会把集群留在半坏的状态
+            run_fault(f, "revert", attempts=6)
+        except BenchError as e:
+            errors.append(str(e))
     if errors:
         raise BenchError("撤销失败：" + "; ".join(errors))
 
@@ -201,6 +216,8 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
                 # 02 §6：症状没出现就不写用例，防止"故障注入了，但症状没出现"的空用例
                 raise BenchError(f"{scenario_id} r{k}：{spec.symptom_wait.timeout_s} 秒内症状没有出现，这条录制作废")
             took = round(time.monotonic() - t0, 1)
+            # settle_s：症状出现后再等一会儿再录制。例如 flood stage 的只读块要等 ES 下一次刷新磁盘信息才加上
+            time.sleep(float(spec.fault.params.get("settle_s", 0)))
             tb = open_backend(pack, f"inv_rec_{ULID()}", Mode.RECORD, ObservationStore(SCRATCH), fixture)
             try:
                 sweep(pack, tb)
