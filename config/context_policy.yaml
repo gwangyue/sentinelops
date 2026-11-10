@@ -2,7 +2,7 @@
 # M1 只用到 L0、L1；L3/L4/L5 和压缩在 M2 打开。预算数字【待定，M2 用实验调】。
 version: 1
 # 每层是否打开：每打开一层就冻结一个新版本，和上一个版本配对比较（06 §4.3"每个版本只做一个足够大的改动"）
-layers: { L3: true, L4: false, L5: false }
+layers: { L3: true, L4: true, L5: false }
 # preassembled_total：预组装（L0+L1+L5+L3+L4）的总预算，超出时按 degrade_order 降级（04 §3.7）；也是 E3 实验的旋钮
 budgets: { prefix: 3000, L0: 500, L1: 2000, L5: 1500, L3: 1000, L4: 1500, L2_max: 20000, preassembled_total: 6500 }
 degrade_order: [L4, L3, L5, L1_related]
