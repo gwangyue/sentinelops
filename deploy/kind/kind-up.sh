@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 本地全链路环境（01 §5 形态 B；08 M1 D1 的 make kind-up 要求）。
 # 负责：kind 集群、每个 worker 的 loop 虚拟盘、静态 PV、ECK、Chaos Mesh、命名空间和网络策略、
-#       es-target、es-memory、Postgres、只读用户。
+#       es-target、es-memory、Postgres、只读用户、es-target 的种子数据。
 # 不负责：Agent 本身的部署（D3 起用 Helm chart）、MySQL（M4）、执行器的写账号（M3）。
 # 每一步先判断是否已经完成，完成了就跳过，所以可以重复执行。
 set -euo pipefail
@@ -124,6 +124,11 @@ step_wait() {
   kc -n sentinel-data rollout status statefulset/postgres --timeout=300s
 }
 
+step_seed() {
+  # 业务数据：没有带副本的业务索引，节点类故障不会留下未分配分片（见 seed.sh 的说明）
+  "$HERE/../chaos/es/seed.sh"
+}
+
 summary() {
   log "完成。状态："
   kc get elasticsearch -A
@@ -136,4 +141,5 @@ step_disks
 step_helm
 step_workloads
 step_wait
+step_seed
 summary
