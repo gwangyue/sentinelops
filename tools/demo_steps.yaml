@@ -1,6 +1,6 @@
 # golden-demo.md 的 10 个步骤在哪个里程碑打开（规则 2）。
 # opened_through：已经结束的最近一个里程碑；它和它之前的步骤都要求通过。每个里程碑结束时改这一行（08 §6.6）。
-opened_through: none   # none | M1 | M2 | M3 | M4
+opened_through: M1     # none | M1 | M2 | M3 | M4
 steps:
   - { n: 1,  title: "集群健康，巡检不调用 LLM",  command: "sentinel patrol es-target",                        open_at: M1 }
   - { n: 2,  title: "注入故障",                  command: "sentinel bench inject es.disk_watermark.single",   open_at: M1 }
