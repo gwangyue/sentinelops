@@ -39,6 +39,7 @@ from sentinel.core.api import (
 from sentinel.eval import results
 from sentinel.eval.baselines import fetch_examples
 from sentinel.eval.dataset import DATASETS
+from sentinel.eval.failures import rule_tags
 from sentinel.eval.guards import check_no_cache, require_dataset_tag
 from sentinel.eval.runner import checked_version, run_one
 from sentinel.eval.scorers import load_pricing, score
@@ -111,6 +112,7 @@ class StreamDeps:
     embed: Callable[[Sequence[str]], list[list[float]]]
     policy: dict[str, Any]
     descriptions: dict[str, str]  # 根因标签 → 一句话说明（写进记忆的 root_cause_text）
+    on_run: Callable[[str, int, dict[str, Any]], None] = lambda eid, rep, out: None  # 保存运行摘要（评审用）
 
 
 def run_stream_set(
@@ -188,6 +190,7 @@ def run_streams(
             pricing=pricing,
         )
 
+    runs: list[dict[str, Any]] = []  # list.append 在 CPython 里是原子的，并行任务直接追加
     memory_on = bool(version.components.context_policy.get("layers", {}).get("L5"))
     deps = StreamDeps(
         run=run,
@@ -196,10 +199,12 @@ def run_streams(
         embed=embed,
         policy=load_memory_policy(),
         descriptions={r.label: r.description for r in load_pack(pack).manifest.root_causes},
+        on_run=lambda eid, rep, out: runs.append(results.run_record(eid, rep, out)),
     )
     scores, rows = run_stream_set(load_streams(pack), examples, reps, deps, log, workers)
     path = results.result_file(f"v{version.seq}__stream", tag, "dev")
     results.save(path, scores)
+    results.save_runs(path, runs)
     side = path.with_suffix(".memory.jsonl")
     side.write_text("".join(json.dumps(r.__dict__, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     return path, side
@@ -210,6 +215,7 @@ def _one(
 ) -> tuple[RunScore, MemoryRow]:
     provider = StoreMemoryProvider(store, NAMESPACE, deps.policy, deps.embed) if store is not None else None
     out = deps.run(ex, provider)
+    deps.on_run(ex.id, rep, out)
     truth = ex.outputs.root_cause_label
     s = deps.score(out, ex, rep)
     l5 = _l5_ids(out.get("bundle"))
@@ -219,6 +225,7 @@ def _one(
     harmed = list(h1.from_memory) if h1 and h1.from_memory and not s.top1_correct else []
     # memory_hit：这条流前面遇到过同一个根因时，相关记忆有没有进入 L5；第一次遇到时为 None（06 §3.1）
     s = s.model_copy(update={"memory_hit": (truth in l5_labels) if occurrence > 1 and store is not None else None})
+    s = s.model_copy(update={"failure_tags": rule_tags(s, out, ex.outputs)})  # memory_hit 变了，标签要重算
     if store is not None:
         # 用真实答案模拟"人确认根因"（05 §4.2）：corrected = 模型的 H1 和真实答案不一致
         fp = build_fingerprint(

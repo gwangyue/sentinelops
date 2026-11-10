@@ -118,6 +118,7 @@ def run(pack: str, split: str, dataset_tag: str | None, reps: int, version_arg: 
     # 本地也存一份 RunScore（统计从这里读）。rep 按同一用例出现的顺序编号
     seen: collections.Counter[str] = collections.Counter()
     scores = []
+    runs = []
     for row in res:
         ex, run_ = row["example"], row["run"]
         eid = (ex.inputs or {})["example_id"]
@@ -135,7 +136,9 @@ def run(pack: str, split: str, dataset_tag: str | None, reps: int, version_arg: 
                 pricing=pricing,
             )
         )
+        runs.append(results.run_record(eid, seen[eid], run_.outputs))
         seen[eid] += 1
     path = results.result_file(f"v{version.seq}", tag, split)
     results.save(path, scores)
+    results.save_runs(path, runs)
     return RunSummary(res.experiment_name, path, scores)

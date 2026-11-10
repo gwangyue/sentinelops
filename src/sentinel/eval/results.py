@@ -3,7 +3,9 @@
 统计直接读这些文件。LangSmith 上也有同样的 feedback，用来看界面；从 LangSmith 拉回结果是 TODO(edge)（06 §9）。
 """
 
+import json
 from pathlib import Path
+from typing import Any
 
 from sentinel.contracts import RunScore
 
@@ -22,3 +24,34 @@ def save(path: Path, scores: list[RunScore]) -> None:
 
 def load(path: Path) -> list[RunScore]:
     return [RunScore.model_validate_json(x) for x in path.read_text(encoding="utf-8").splitlines() if x]
+
+
+def runs_file(path: Path) -> Path:
+    """评审模型要看诊断过程：每次运行的假设和渲染后的上下文另存一份（06 §6.1 第二步）。"""
+    return path.with_suffix(".runs.jsonl")
+
+
+def run_record(example_id: str, rep: int, out: dict[str, Any]) -> dict[str, Any]:
+    d = out.get("diagnosis") or {}
+    return {
+        "example_id": example_id,
+        "rep": rep,
+        "hypotheses": [
+            {k: h.get(k) for k in ("root_cause", "root_cause_label", "confidence", "claims")}
+            for h in d.get("hypotheses", [])
+        ],
+        "rendered": (out.get("bundle") or {}).get("rendered", ""),
+        "escalate_reason": out.get("escalate_reason"),
+    }
+
+
+def save_runs(path: Path, rows: list[dict[str, Any]]) -> None:
+    runs_file(path).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+
+
+def load_runs(path: Path) -> dict[tuple[str, int], dict[str, Any]]:
+    f = runs_file(path)
+    if not f.exists():
+        return {}
+    rows = [json.loads(x) for x in f.read_text(encoding="utf-8").splitlines() if x]
+    return {(r["example_id"], r["rep"]): r for r in rows}

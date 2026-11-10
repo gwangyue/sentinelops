@@ -1,7 +1,8 @@
 """用例级评分（06 §3.1）：全部用确定性方法计算，不用 LLM。
 
 负责：从一次调查的输出 + 用例的真实答案，算出 RunScore（03 §6.3）。
-不负责：失败归类标签（M2 D9）；聚合和区间（stats/）。
+失败标签用 failures.rule_tags 在这里一起算出来（06 §6.1 第一步）。
+不负责：评审模型标签（failures.judge_tags，事后在 eval clusters 里补）；聚合和区间（stats/）。
 M1 没有修复方案和记忆：unsafe_proposals 记 0，remediation_completed / memory_hit 记 None。
 """
 
@@ -12,6 +13,7 @@ import yaml
 
 from sentinel.contracts import ContextBundle, Diagnosis, ExampleOutputs, Observation, RunScore
 from sentinel.core.api import check_evidence, support_rate
+from sentinel.eval.failures import rule_tags
 
 PRICING = Path(__file__).resolve().parents[3] / "config" / "pricing.yaml"
 
@@ -64,7 +66,7 @@ def score(
     rendered = ContextBundle.model_validate(out["bundle"]).rendered if out.get("bundle") else ""
     recall = sum(1 for k in truth.key_facts if f" {k}=" in rendered) / len(truth.key_facts) if truth.key_facts else 1.0
     tin, tout = (d.tokens_in, d.tokens_out) if d else (0, 0)
-    return RunScore(
+    s = RunScore(
         example_id=example_id,
         rep=rep,
         agent_version=agent_version,
@@ -83,8 +85,9 @@ def score(
         tokens=tin + tout,
         cost_usd=cost_usd(model, tin, tout, pricing),
         replay_misses=sum(1 for o in obs if o.status == "replay_miss"),
-        failure_tags=[],  # M2 D9：规则 + 评审模型
+        failure_tags=[],
     )
+    return s.model_copy(update={"failure_tags": rule_tags(s, out, truth)})
 
 
 FEEDBACK_KEYS = (

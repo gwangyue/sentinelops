@@ -12,6 +12,7 @@ from sentinel.core.detect import DetectResult, load_env, run_detect
 from sentinel.core.diagnosis.evidence import ClaimCheck, check_evidence, support_rate
 from sentinel.core.graph.investigation import InvState
 from sentinel.core.graph.run import current_version, investigate, load_packs, make_deps, patrol
+from sentinel.core.llm.chat import chat_model
 from sentinel.core.llm.config import load_models_config
 from sentinel.core.llm.embed import embed
 from sentinel.core.memory import feedback as memory_feedback
@@ -47,6 +48,7 @@ __all__ = [
     "StoreMemoryProvider",
     "ToolBackend",
     "build_fingerprint",
+    "chat_model",
     "check_evidence",
     "current_version",
     "embed",

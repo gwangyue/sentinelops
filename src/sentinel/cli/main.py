@@ -427,7 +427,41 @@ def eval_compare(
             typer.echo(f"  记忆侧（{name}）：{memory_summary(side, rb if name == b else ra)}")
 
 
-@knowledge_app.command("index")
+@eval_app.command("clusters")
+def eval_clusters(
+    version: str,
+    split: Annotated[str, typer.Option()] = "dev",
+    dataset_tag: Annotated[str | None, typer.Option(help="数据集版本标签（必填）")] = None,
+    stream: Annotated[bool, typer.Option(help="事故流的结果")] = False,
+    judge: Annotated[bool, typer.Option(help="对上下文都在但答错的运行调用评审模型（06 §6.1 第二步）")] = True,
+) -> None:
+    """失败归类（06 §6.2）：规则标签 + 评审模型标签，按标签组合分组，给出样例和建议的下一步。"""
+    from sentinel.core.api import chat_model
+    from sentinel.eval import results
+    from sentinel.eval.dataset import load_examples
+    from sentinel.eval.failures import FIX_HINTS, apply_judge, clusters, next_step
+    from sentinel.eval.guards import require_dataset_tag
+
+    tag = require_dataset_tag(dataset_tag)
+    path = results.result_file(version + ("__stream" if stream else ""), tag, split)
+    truths = {e.id: e.outputs for e in load_examples("es")}
+
+    def ask(prompt: str) -> str:
+        return chat_model("evaluator").invoke(prompt).text
+
+    scores, n_judged = apply_judge(path, truths, ask if judge else None)
+    cs = clusters(scores)
+    failed = sum(1 for s in scores if s.failure_tags)
+    typer.echo(
+        f"{version}（{tag} / {split}）：{len(scores)} 次运行，有标签 {failed} 次"
+        f"（用例级 {len({s.example_id for s in scores if s.failure_tags})} 个；本次调用评审 {n_judged} 次）"
+    )
+    for c in cs:
+        typer.echo(f"  {c.runs:>3}  {' + '.join(c.tags):<45} {c.examples} 个用例  样例：{c.sample}")
+    nxt = next_step(cs)
+    typer.echo(f"建议下一步：{nxt} → {FIX_HINTS.get(nxt.removeprefix('judge:'), '看评审理由')}" if nxt else "没有失败")
+
+
 def knowledge_index(pack: Annotated[str, typer.Option()] = "es") -> None:
     """把专家包 knowledge/ 下的 runbook 切成段落、算向量，重建 es-memory 上的知识索引。"""
     from sentinel.core.knowledge.corpus import knowledge_hash, sections
