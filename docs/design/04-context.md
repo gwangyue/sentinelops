@@ -92,7 +92,7 @@ flowchart LR
 
 ### 3.1 为什么原始数据不能直接进上下文
 
-**现象**：ES 的 `_nodes/stats` 在 3 节点集群上就有几万字符【据记忆：量级如此，以 M1 实测为准】；`_cat/shards` 在分片多的集群上有成百上千行。
+**现象**：ES 的 `_nodes/stats` 在 3 节点集群上全量有约 230 KB，只取 fs、jvm、os、thread_pool、breaker 五类也有约 27 KB（M1 D2 实测，ES 9.5.3）；`_cat/shards` 在分片多的集群上有成百上千行。
 
 **怎么读**：直接塞进上下文，会同时带来三个问题：
 
@@ -349,6 +349,6 @@ E1 和 E4 是 M2 的必做实验；其余视时间而定（08 篇）。
 
 1. LangChain 文档：Deep Agents Customization（`backend`、`CompositeBackend` 按路径前缀路由、`StoreBackend`）— https://docs.langchain.com/oss/python/deepagents/customization （2026-11-09 读取，只读了前 10 万字符）
 2. Elastic 文档：RRF retriever（`retrievers`、`rank_constant` 默认 60、`rank_window_size`、`filter`、可以给每路结果设置 `weight`）— https://www.elastic.co/docs/reference/elasticsearch/rest-apis/retrievers/rrf-retriever （2026-11-09 读取；页面中的授权要求部分未读到）
-3. 未核实：Gemini 上下文缓存的计费方式；长上下文"中间遗忘"现象（据记忆）；`_nodes/stats` 输出的实际大小。
+3. 未核实：Gemini 上下文缓存的计费方式；长上下文"中间遗忘"现象（据记忆）。`_nodes/stats` 的大小已在 M1 D2 实测（见 §3 开头）。
 
 本篇完。下一篇：05 记忆。

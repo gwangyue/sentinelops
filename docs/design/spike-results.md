@@ -183,3 +183,24 @@
 - **`kind-up` 可以重复执行**：第二次运行时，每一步都显示“已存在，跳过”；`kubectl diff` 为空，Pod 没有重启。
 - **填盘的百分比要按 ES 的口径算**：ext4 默认保留 5% 给 root，`df` 的 used 列不含这部分，ES 却把它算作已用。第一次按 used 列计算，结果填到了 99%（越过 flood stage）。改成 1 − 可用/总量之后，ES 看到的是 93%。撤销后恢复到 5%，集群 green。
 - **安全检查**：对非挂载点（`/var/lib`）和非 loop 设备的挂载点（节点根目录，挂载源是 overlay），都拒绝执行，exit 3。
+
+## M1 D2 发现（2026-11-10）
+
+在 kind 上制造 4 种状态，录制成测试数据 `tests/fixtures/es/*.jsonl`，来源是 ES 9.5.3 的真实输出。
+
+| 状态 | 制造方式 | 触发的检测器 |
+|---|---|---|
+| healthy | — | 无 |
+| disk_watermark | `fill_disk.sh --pct 93`，等 40 秒后创建 `bench-new`（1 主分片 2 副本） | `es.disk_watermark`、`es.unassigned_shards` |
+| node_down | `pod_failure.yaml` | `es.node_count`、`es.unassigned_shards` |
+| shard_limit | 把 `cluster.max_shards_per_node` 调到 5 | `es.shard_limit`（critical） |
+
+1. **没有业务索引时，节点宕机不会留下未分配分片**。系统索引都设了 `auto_expand_replicas`，节点少了就自动减副本，60 秒后未分配分片归零，只剩"节点数减少"一个症状。所以 `kind-up` 增加了种子数据这一步：`deploy/chaos/es/seed.sh` 创建 `bench` 索引，3 个主分片、2 个副本、2000 条文档。
+2. **磁盘填满后，要等 ES 刷新磁盘信息（约 30 秒）再建索引**。和 S2 的结论一致：分配决策用的是每 30 秒刷新一次的磁盘快照，而 `_cat/allocation` 读的是实时值。第一次在 `_cat/allocation` 显示 92% 后立刻建索引，副本仍被分到了 data-2。
+3. **ECK 默认开启了分配感知**（`node.attr.k8s_node_name`）。`allocation_explain` 里除了 `disk_threshold`，还会出现 `awareness` 拒绝原因。这对诊断是有用的上下文，也是一个潜在的干扰项。
+4. **port-forward 到 Service 时，可能恰好连到被注入故障的 Pod**。节点宕机期间连接会断。D4 的 bench 要像 S2 那样，固定转发到不被注入故障的节点。
+5. **`_nodes/stats` 的大小**：3 个节点全量约 230 KB；只取 5 类指标约 27 KB，每个节点约 9 KB。摘要后约 76 个 token。
+6. **两个摘要器根据真实数据做了修正**：
+   - `hot_threads` 的标题行带着整串节点属性，现在只保留节点名；
+   - `health-node[c]` 这类持久任务一直在运行，不应算作"长时间运行的任务"。
+

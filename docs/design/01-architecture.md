@@ -171,6 +171,7 @@ sentinelops/
 │   ├── cli/                      # Typer
 │   └── mcp/                      # 只读 MCP 服务
 ├── config/                       # models.yaml：各用途的模型型号和参数；代码里不写型号（ADR-008）
+├── env/                          # 环境记忆 <集群>.yaml：期望节点数、业务重要性、维护窗口（05 §2，由人维护）
 ├── datasets/                     # 场景定义（以 git 为准，同步到 LangSmith）
 ├── fixtures/                     # 回放录制（大文件放 S3，git 里只放索引）
 ├── deploy/

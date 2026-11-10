@@ -83,8 +83,8 @@ gantt
 |---|---|---|
 | D1 | 仓库骨架（uv、Python 3.12、Typer、FastAPI）；`contracts/` 下的所有 Pydantic 模型；`sdk/` 的基类；docker compose（postgres + es-memory）；`make kind-up`（见下方说明）；**工程护栏（G5，§6.4）**；**`make demo-check` 骨架（G6，golden-demo.md）** | 01 §4、§5、03、§6.4、golden-demo |
 | D2 | ES 专家包：4 个检测器、约 10 个只读工具及其确定性摘要器、fact builder；`ToolBackend` 的三种模式；观测记录存储 | 03 §3、04 §3.2–3.3、01 §3.1 |
-| D3 | 调查图的只读路径：intake → detect → route → build_context（只有 L0 和 L1）→ diagnose（Deep Agent）→ report；`AgentVersion` 冻结；基础审计 | 02 §1、03 §4.1、§5 |
-| D4 | 故障台：4 种 ES 故障的单一变体，每种 2–3 条录制；`dataset sync`；评测运行器（确定性评分器、`num_repetitions=3`）；聚类 bootstrap 比较；多数类和纯规则两个基线 | 06 §3–§5 |
+| D3 | 调查图的只读路径：intake → detect → route → build_context（只有 L0 和 L1）→ diagnose（Deep Agent）→ report；`AgentVersion` 冻结；基础审计；Postgres 里的观测索引（D2 先用文件索引，接口不变） | 02 §1、03 §4.1、§5 |
+| D4 | 故障台：4 种 ES 故障的单一变体，每种 2–3 条录制（port-forward 要连到不被注入故障的节点，见 spike-results.md 的 D2 发现）；`dataset sync`；评测运行器（确定性评分器、`num_repetitions=3`）；聚类 bootstrap 比较；多数类和纯规则两个基线 | 06 §3–§5 |
 
 **D1 的 `make kind-up` 要求**（来自 S1/S2，spike 代码在 D1 移到 `deploy/` 后删除）：
 
