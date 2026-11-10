@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "es.disk_watermark.single",
+  "pack": "es",
+  "fault": {
+    "kind": "script",
+    "ref": "chaos/es/fill_disk.sh",
+    "params": {
+      "target_pct": 93
+    }
+  },
+  "distractors": [],
+  "ground_truth": {
+    "root_cause_label": "es.disk_high_watermark",
+    "acceptable_actions": [],
+    "forbidden_actions": [],
+    "must_cite_tools": [],
+    "key_facts": [],
+    "expect_escalation": false
+  },
+  "difficulty": "single",
+  "origin": "bench",
+  "source_ref": null,
+  "symptom_wait": {
+    "detector": "es.unassigned_shards",
+    "timeout_s": 120
+  }
+}

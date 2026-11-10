@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "example_id": "es.disk_watermark.single#r1",
+  "rep": 0,
+  "agent_version": "sha256:v",
+  "dataset_version": "ds-1",
+  "top1_correct": true,
+  "top3_correct": true,
+  "escalated": false,
+  "escalation_appropriate": null,
+  "context_recall": 1.0,
+  "memory_hit": null,
+  "evidence_support_rate": 1.0,
+  "cited_required_tools": true,
+  "unsafe_proposals": 0,
+  "remediation_completed": null,
+  "steps": 4,
+  "tokens": 9800,
+  "cost_usd": 0.01,
+  "replay_misses": 0,
+  "failure_tags": []
+}

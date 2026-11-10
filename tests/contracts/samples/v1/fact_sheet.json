@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "target": "es-target",
+  "generated_at": "2026-11-10T09:00:00Z",
+  "facts": [
+    {
+      "key": "node.disk_used_pct",
+      "subject": "node-2",
+      "value": 93.0,
+      "baseline": 60.0,
+      "status": "abnormal",
+      "observation_id": "obs_1"
+    }
+  ],
+  "omitted_normal_count": 40
+}

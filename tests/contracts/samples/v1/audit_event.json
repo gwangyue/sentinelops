@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "aud_1",
+  "ts": "2026-11-10T09:00:00Z",
+  "investigation_id": "inv_1",
+  "agent_version": "sha256:v",
+  "actor": "agent",
+  "type": "diagnosis.completed",
+  "payload": {
+    "hypotheses": [
+      "H1"
+    ]
+  },
+  "prev_hash": "sha256:0"
+}

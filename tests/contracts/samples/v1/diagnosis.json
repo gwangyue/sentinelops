@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "investigation_id": "inv_1",
+  "hypotheses": [
+    {
+      "id": "H1",
+      "root_cause": "node-2 磁盘超过高水位",
+      "root_cause_label": "es.disk_high_watermark",
+      "confidence": 0.8,
+      "claims": [
+        {
+          "id": "C1",
+          "text": "node-2 磁盘 93%",
+          "evidence": [
+            "obs_1"
+          ],
+          "quote": "disk 93%"
+        }
+      ],
+      "from_memory": []
+    }
+  ],
+  "escalate": false,
+  "escalate_reason": null,
+  "steps": 4,
+  "tokens_in": 9000,
+  "tokens_out": 800
+}

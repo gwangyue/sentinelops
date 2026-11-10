@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "mem_1",
+  "namespace": "es/es-target",
+  "symptom_fingerprint": {
+    "detectors": [
+      "es.unassigned_shards"
+    ]
+  },
+  "symptom_text": "unassigned shards; data node disk usage high",
+  "root_cause_label": "es.disk_high_watermark",
+  "root_cause_text": "node-2 磁盘满",
+  "action_taken": "es.relocate_shards",
+  "outcome": "resolved",
+  "source_investigations": [
+    "inv_1"
+  ],
+  "occurrences": 1,
+  "confused_with": [],
+  "confirmed_by": "human:approver",
+  "corrected": false,
+  "target_version": "9.5.3",
+  "created_at": "2026-11-10T09:00:00Z",
+  "expires_at": null,
+  "invalidated": false,
+  "hit_count": 0,
+  "helpful_count": 0
+}

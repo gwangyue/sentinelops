@@ -1,0 +1,7 @@
+{
+  "id": "apv_1",
+  "plan_id": "pln_1",
+  "plan_hash": "sha256:abc",
+  "requested_at": "2026-11-10T09:00:00Z",
+  "expires_at": "2026-11-10T09:00:00Z"
+}

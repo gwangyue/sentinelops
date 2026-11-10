@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "obs_1",
+  "investigation_id": "inv_1",
+  "tool": "es.allocation_explain",
+  "args": {
+    "index": "logs"
+  },
+  "backend": "replay",
+  "status": "ok",
+  "raw_ref": "fixtures/x.json",
+  "raw_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "digest": "node-2 disk 93%",
+  "untrusted": true,
+  "created_at": "2026-11-10T09:00:00Z"
+}

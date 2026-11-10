@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "pack": "es",
+  "version": "0.1.0",
+  "supports": ">=9.0,<10",
+  "connection": {
+    "kind": "elasticsearch",
+    "read_credential": "es-readonly",
+    "write_credential": null
+  },
+  "detectors": [],
+  "tools": [
+    {
+      "id": "es.allocation_explain",
+      "entry": "m:f",
+      "mcp_export": false,
+      "output_budget_tokens": 800
+    }
+  ],
+  "actions": [],
+  "fact_builders": [],
+  "knowledge": [],
+  "scenarios": "scenarios/"
+}

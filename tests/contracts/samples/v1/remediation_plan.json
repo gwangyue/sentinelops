@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "pln_1",
+  "investigation_id": "inv_1",
+  "action_id": "es.relocate_shards",
+  "target": "es-target",
+  "params": {
+    "from": "node-2"
+  },
+  "rationale_hypothesis": "H1",
+  "precheck_snapshot": {
+    "ok": true
+  },
+  "dry_run_result": {
+    "shards": 3
+  },
+  "rollback_plan": "move back",
+  "plan_hash": "sha256:abc"
+}

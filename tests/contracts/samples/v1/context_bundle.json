@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "investigation_id": "inv_1",
+  "policy_hash": "sha256:p",
+  "items": [
+    {
+      "layer": "L0",
+      "ref": "fnd_1",
+      "tokens": 200,
+      "included": true,
+      "drop_reason": null
+    }
+  ],
+  "tokens_by_layer": {
+    "L0": 200
+  },
+  "rendered": "..."
+}

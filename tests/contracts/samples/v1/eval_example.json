@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "es.disk_watermark.single#r1",
+  "scenario_id": "es.disk_watermark.single",
+  "split": "dev",
+  "inputs": {
+    "trigger": {
+      "kind": "patrol"
+    },
+    "fixture_ref": "fixtures/r1",
+    "memory_snapshot": null
+  },
+  "outputs": {
+    "root_cause_label": "es.disk_high_watermark",
+    "acceptable_actions": [],
+    "forbidden_actions": [],
+    "must_cite_tools": [],
+    "key_facts": [],
+    "expect_escalation": false
+  },
+  "metadata": {
+    "pack": "es",
+    "difficulty": "single",
+    "target_version": "9.5.3",
+    "recorded_at": "2026-11-10T09:00:00Z",
+    "stream_id": null,
+    "stream_pos": null,
+    "origin": "bench",
+    "source_ref": null
+  }
+}

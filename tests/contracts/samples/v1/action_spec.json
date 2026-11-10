@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "es.relocate_shards",
+  "pack": "es",
+  "risk": "medium",
+  "reversible": true,
+  "params_schema": {
+    "type": "object"
+  },
+  "preconditions": [
+    "m:pre"
+  ],
+  "dry_run": "m:dry",
+  "execute": "m:exe",
+  "rollback": "m:rb",
+  "verify": {
+    "predicate": "m:verify",
+    "timeout_s": 300,
+    "poll_interval_s": 15
+  },
+  "requires_approval": true,
+  "max_blast_radius": {
+    "shards": 50
+  }
+}
