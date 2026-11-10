@@ -17,6 +17,7 @@ from langsmith import Client, evaluate
 
 from sentinel.contracts import AgentVersion, ExampleOutputs, RunScore
 from sentinel.core.api import (
+    MemoryProvider,
     MemoryStore,
     Mode,
     ObservationStore,
@@ -43,12 +44,12 @@ def checked_version(version_arg: str | None) -> AgentVersion:
     return v
 
 
-def run_one(inputs: dict[str, Any], version: AgentVersion) -> dict[str, Any]:
+def run_one(inputs: dict[str, Any], version: AgentVersion, memory: MemoryProvider | None = None) -> dict[str, Any]:
     """一次调查：和线上同一套组装（core.make_deps），只是换成独立的内存存储 + 回放 fixture_ref。
-    不写 Postgres，不留审计（评测不是线上调查）。"""
+    不写 Postgres，不留审计（评测不是线上调查）。memory 由事故流运行器传入（每条流一个临时记忆索引）。"""
     store = MemoryStore()
     obs = ObservationStore(Path(tempfile.mkdtemp(prefix="sentinel-eval-")), index=store)
-    deps = make_deps(store, obs, Mode.REPLAY, REPO / inputs["fixture_ref"], version=lambda: version)
+    deps = make_deps(store, obs, Mode.REPLAY, REPO / inputs["fixture_ref"], version=lambda: version, memory=memory)
     s = investigate(deps, inputs["trigger"]["target"], "es", InMemorySaver())
     return {
         "status": s.get("status"),
@@ -56,6 +57,11 @@ def run_one(inputs: dict[str, Any], version: AgentVersion) -> dict[str, Any]:
         "diagnosis": s.get("diagnosis"),
         "bundle": s.get("bundle"),
         "observations": [o.model_dump(mode="json") for o in obs.list(s["inv_id"])],
+        # 事故流要用：模拟"人确认"后写记忆时，指纹从这些算出来（05 §4.2）
+        "findings": s.get("findings", []),
+        "fact_sheets": s.get("fact_sheets", []),
+        "changes": s.get("changes", []),
+        "inv_id": s["inv_id"],
     }
 
 

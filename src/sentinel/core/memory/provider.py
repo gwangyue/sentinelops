@@ -17,7 +17,7 @@ class StoreMemoryProvider:
     def __init__(
         self,
         store: MemoryStore,
-        namespace: str,
+        namespace: str | None,
         policy: dict[str, Any],
         embed: Callable[[Sequence[str]], list[list[float]]],
     ) -> None:
@@ -28,9 +28,11 @@ class StoreMemoryProvider:
     ) -> list[MemoryHit]:
         now = datetime.now(UTC)
         f = fp.build(findings, sheets, changes)
+        # 命名空间 = 领域/集群（05 §3.6 第 3 道防线）；没有显式指定时，从问题事件推出来
+        ns = self.namespace or f"{findings[0].pack}/{findings[0].target}"
         hits = retrieve(
             self.store,
-            namespace=self.namespace,
+            namespace=ns,
             fingerprint=f,
             text=symptom_text(f),
             embed=self.embed,

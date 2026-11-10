@@ -15,6 +15,7 @@ import yaml
 from sentinel.contracts import VersionComponents
 from sentinel.core.knowledge.corpus import knowledge_hash
 from sentinel.core.llm.config import load_models_config
+from sentinel.core.memory.policy import load_memory_policy
 from sentinel.core.packs_registry import LoadedPack
 
 REPO = Path(__file__).resolve().parents[4]
@@ -90,7 +91,7 @@ def collect_components(packs: list[LoadedPack], code_sha: str | None = None) -> 
         models=models,
         tools=tools,
         context_policy=load_context_policy(),
-        memory_policy={},  # M2 D6–D7
+        memory_policy=load_memory_policy(),  # 05 篇：记忆检索和写入的全部参数
         packs={p.manifest.pack: p.manifest.version for p in packs},
         code_sha=code_sha if code_sha is not None else behavior_sha(),
     )
