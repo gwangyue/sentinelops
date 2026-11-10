@@ -1,0 +1,5 @@
+# 环境记忆（05 §2）：由人维护，进入事实卡片的"环境"一行，也给检测器提供期望值。
+expected_nodes: 3
+importance: high          # 业务重要性
+maintenance_window: null  # 例如 "Sun 02:00-04:00"
+known_issues: []
