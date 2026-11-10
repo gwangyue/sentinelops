@@ -2,7 +2,13 @@
 
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from sentinel.sdk import Args, ReadOnlyHttp, ReadTool
+
+
+class IndexSettingsArgs(BaseModel):
+    index: str = Field(description="索引名，可以用通配符，例如 logs-*")
 
 
 def _indices_fetch(http: ReadOnlyHttp, args: Args) -> Any:
@@ -46,6 +52,7 @@ index_settings = ReadTool(
     description="索引设置中和分配有关的项：分片数、副本数、分配过滤规则、只读块。参数 index 必填（可以用通配符）。",
     fetch=_isettings_fetch,
     summarize=_isettings_summary,
+    args_schema=IndexSettingsArgs,
 )
 
 

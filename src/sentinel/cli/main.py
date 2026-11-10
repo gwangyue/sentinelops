@@ -16,6 +16,10 @@ pack_app = typer.Typer(no_args_is_help=True, help="专家包")
 tools_app = typer.Typer(no_args_is_help=True, help="只读工具（开发调试用）")
 app.add_typer(pack_app, name="pack")
 app.add_typer(tools_app, name="tools")
+version_app = typer.Typer(no_args_is_help=True, help="Agent 版本（03 §5.2）")
+inv_app = typer.Typer(no_args_is_help=True, help="调查")
+app.add_typer(version_app, name="version")
+app.add_typer(inv_app, name="investigations")
 
 # 观测记录的原始输出放在仓库根目录的 var/ 下（已加入 .gitignore）
 OBS_ROOT = Path("var/observations")
@@ -102,3 +106,86 @@ def detect(
         typer.echo(f"  事实卡片：{len(fs.facts)} 条，省略正常项 {fs.omitted_normal_count} 条")
         for fact in fs.facts:
             typer.echo(f"    {fact.status:<8} {fact.subject:<22} {fact.key:<26} {fact.value}  {fact.observation_id}")
+
+
+@version_app.command("freeze")
+def version_freeze(note: Annotated[str, typer.Option(help="这一版改了什么（必填）")]) -> None:
+    """冻结当前的提示词、模型、工具、策略和代码为一个版本；内容相同就复用（03 §5.2）。"""
+    from sentinel.core.graph.run import load_packs
+    from sentinel.core.store import open_store
+    from sentinel.core.versioning.components import collect_components, git_dirty
+    from sentinel.core.versioning.freeze import freeze
+
+    v, created = freeze(open_store(), collect_components(list(load_packs().values())), note, dirty=git_dirty())
+    typer.echo(f"{'新建' if created else '复用'} v{v.seq} {v.hash[:19]}…  parent={(v.parent or '-')[:19]}  {v.note}")
+
+
+@version_app.command("list")
+def version_list() -> None:
+    from sentinel.core.store import open_store
+
+    for v in open_store().list_versions():
+        typer.echo(f"v{v.seq:<3} {v.hash[:19]}…  {v.created_at:%Y-%m-%d %H:%M}  {v.note}")
+
+
+@app.command()
+def patrol(
+    target: str,
+    pack: Annotated[str, typer.Option()] = "es",
+    backend: Annotated[str, typer.Option(help="live | record | replay")] = "live",
+    fixture: Annotated[Path | None, typer.Option(help="record / replay 的录制文件")] = None,
+) -> None:
+    """巡检一次：没有问题就结束（不调用 LLM）；有问题就只读诊断并出报告（02 §2）。"""
+    import time
+
+    from sentinel.core.graph.run import patrol as run_patrol
+    from sentinel.core.toolbackend import Mode
+
+    t0 = time.monotonic()
+    s = run_patrol(target, pack, Mode(backend), fixture)
+    took = time.monotonic() - t0
+    if s["status"] == "healthy":
+        typer.echo(f"健康，0 个问题，用时 {took:.1f} 秒  {s['inv_id']}")
+    else:
+        typer.echo(f"{s['inv_id']}  状态 {s['status']}  问题 {len(s['findings'])} 个  用时 {took:.1f} 秒")
+        typer.echo(f"查看：sentinel investigations show {s['inv_id']}")
+
+
+@inv_app.command("list")
+def inv_list() -> None:
+    from sentinel.core.store import open_store
+
+    for r in open_store().list_investigations():
+        typer.echo(f"{r.id}  {r.created_at:%m-%d %H:%M}  {r.target:<10} {r.status:<10} 问题 {len(r.findings)}")
+
+
+@inv_app.command("show")
+def inv_show(inv_id: str) -> None:
+    """02 §3.3 的格式：问题事件、假设、置信度、证据（观测 ID + 引文）。"""
+    from sentinel.contracts import Diagnosis
+    from sentinel.core.diagnosis.evidence import check_evidence, support_rate
+    from sentinel.core.store import open_store
+
+    store = open_store()
+    r = store.get_investigation(inv_id)
+    if r is None:
+        raise typer.BadParameter(f"找不到调查 {inv_id}")
+    v = store.get_version(r.agent_version)
+    typer.echo(f"调查 {r.id}   集群 {r.target}   版本 v{v.seq if v else '?'}   状态 {r.status}")
+    for f in r.findings:
+        typer.echo(f"问题事件  {f['detector']}  {f['severity']}  {f['summary']}")
+    if r.diagnosis is None:
+        return
+    d = Diagnosis.model_validate(r.diagnosis)
+    checks = {(c.hypothesis_id, c.claim_id): c for c in check_evidence(d, store.observations(inv_id))}
+    typer.echo("诊断")
+    for h in d.hypotheses:
+        typer.echo(f"  {h.id}  {h.confidence:.2f}  [{h.root_cause_label or '未归类'}] {h.root_cause}")
+        for c in h.claims:
+            mark = "✓" if checks[(h.id, c.id)].supported else f"✗ {checks[(h.id, c.id)].reason}"
+            typer.echo(f"        {c.id} {c.text}")
+            typer.echo(f"           证据 {','.join(c.evidence)} {mark}" + (f'  "{c.quote}"' if c.quote else ""))
+    rate = support_rate(list(checks.values()))
+    typer.echo(f"证据支持率 {rate:.0%}   工具调用 {d.steps} 次   token 输入 {d.tokens_in} / 输出 {d.tokens_out}")
+    if r.escalate_reason:
+        typer.echo(f"已升级给人：{r.escalate_reason}")

@@ -2,7 +2,14 @@
 
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from sentinel.sdk import Args, ReadOnlyHttp, ReadTool
+
+
+class HotThreadsArgs(BaseModel):
+    threads: int = Field(3, description="每个节点列出几个最热的线程")
+
 
 # 只取诊断用得到的几类指标，_nodes/stats 全量输出太大（spike-results：大小待测）
 _METRICS = "fs,jvm,os,thread_pool,breaker"
@@ -55,4 +62,5 @@ hot_threads = ReadTool(
     fetch=_hot_fetch,
     summarize=_hot_summary,
     defaults={"threads": 3},
+    args_schema=HotThreadsArgs,
 )

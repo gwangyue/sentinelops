@@ -3,7 +3,19 @@
 from collections import Counter
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from sentinel.sdk import Args, ReadOnlyHttp, ReadTool
+
+
+class ShardsArgs(BaseModel):
+    index: str | None = Field(None, description="只看这个索引（可以用通配符）；不填就是全部索引")
+
+
+class ExplainArgs(BaseModel):
+    index: str | None = Field(None, description="索引名；三个参数都不填时，解释第一个未分配的分片")
+    shard: int | None = Field(None, description="分片编号")
+    primary: bool | None = Field(None, description="true = 主分片，false = 副本")
 
 
 def _alloc_fetch(http: ReadOnlyHttp, args: Args) -> Any:
@@ -55,6 +67,7 @@ cat_shards = ReadTool(
     fetch=_shards_fetch,
     summarize=_shards_summary,
     defaults={"index": None},
+    args_schema=ShardsArgs,
 )
 
 
@@ -92,4 +105,5 @@ allocation_explain = ReadTool(
     fetch=_explain_fetch,
     summarize=_explain_summary,
     defaults={"index": None, "shard": None, "primary": None},
+    args_schema=ExplainArgs,
 )

@@ -1,0 +1,18 @@
+# 磁盘水位，单一故障（03 §6.1）。D4 的故障台按这份定义注入、等症状、录制。
+schema_version: 1
+id: es.disk_watermark.single
+pack: es
+fault:
+  kind: script
+  ref: chaos/es/fill_disk.sh            # 在 kind 节点上写数据卷（S2）
+  params: { pod: es-target-es-data-2, pct: 93 }
+ground_truth:
+  root_cause_label: es.disk_high_watermark
+  acceptable_actions: [es.relocate_shards, es.raise_watermark_temporarily]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.allocation_explain]
+  key_facts: [node.disk_used_pct, cluster.unassigned_shards]
+  expect_escalation: false
+difficulty: single
+origin: bench
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }
