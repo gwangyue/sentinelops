@@ -14,3 +14,4 @@ fixtures/**/*.jsonl
 spike/
 .claude/contracts.unlock
 .claude/settings.local.json
+var/
