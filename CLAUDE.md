@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：M1 完成（tag `m1`，报告 docs/reports/M1-report.md）；下一步是 M2，开始前先看报告 §9 的两个决定
-- 最新版本：v7（M1 发布版本，本地 compose 的 Postgres）· 最新数据集标签：ds-20261110-1（es，dev 8 条）
+- 里程碑：M2 进行中。第一段（场景扩充）完成；下一步是失败归类的第一条线索（shard_limit.with_distractor），然后做上下文层（D6）
+- 最新版本：v10（M1 发布版本是 v7）· 最新数据集标签：ds-20261110-4（es，17 个场景：dev 24 / heldout 10）
