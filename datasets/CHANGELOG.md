@@ -8,3 +8,4 @@
 | ds-20261110-2 | es | 8 | dev 8 / heldout 0 | 新增 0 | 重复同步，验证不会重复上传 |
 | ds-20261110-3 | es | 34 | dev 24 / heldout 10 | 新增 26 | M2：17 个场景（单一 7、干扰项 7、组合 2、外部改编 3 进 heldout），34 条录制 |
 | ds-20261110-4 | es | 34 | dev 24 / heldout 10 | 新增 34，删除 34 | M2：全部重录（每个未分配分片都录 allocation_explain），17 个场景 34 条 |
+| ds-20261110-5 | es | 34 | dev 24 / heldout 10 | 新增 2，删除 2 | shard_limit.with_distractor 的干扰项从 X1 改为 X3（原场景真实答案不唯一），重录 2 条 |
