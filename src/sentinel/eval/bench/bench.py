@@ -68,8 +68,9 @@ def run_fault(fault: FaultRef, action: str, attempts: int = 1) -> None:
             return
         if i < attempts - 1:
             # 打出来：重试掩盖了问题时，至少日志里看得到原因
+            reason = (r.stderr or r.stdout).strip()[-200:]
             print(
-                f"[bench] {fault.ref} {action} 第 {i + 1} 次失败，{POLL_S} 秒后重试：{(r.stderr or r.stdout).strip()[-200:]}",
+                f"[bench] {fault.ref} {action} 第 {i + 1} 次失败，{POLL_S} 秒后重试：{reason}",
                 file=sys.stderr,
             )
             time.sleep(POLL_S)
