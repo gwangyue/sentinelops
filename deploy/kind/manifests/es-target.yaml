@@ -1,0 +1,48 @@
+# es-target：被注入故障的目标集群（01 §5），3 个节点（master+data），heap 1g、容器上限 2Gi（S1 实测可用）。
+# 数据卷用 es-fixed（固定 3G 的 loop 盘），磁盘水位故障才不会写满 Docker VM（S2）。
+# 只读角色和用户用 ECK 声明式创建（spec.auth），kind-up 重复执行时结果不变。
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: es-target
+  namespace: targets
+spec:
+  version: 9.5.3
+  auth:
+    roles:
+      - secretName: sentinel-readonly-role
+    fileRealm:
+      - secretName: sentinel-ro-user
+  nodeSets:
+    - name: data
+      count: 3
+      config:
+        node.store.allow_mmap: false   # kind 节点上没有调 vm.max_map_count，关掉 mmap 避免启动失败
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: "-Xms1g -Xmx1g"
+              resources:
+                requests: { memory: 2Gi, cpu: 500m }
+                limits: { memory: 2Gi }
+      volumeClaimTemplates:
+        - metadata: { name: elasticsearch-data }
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: es-fixed
+            resources: { requests: { storage: 3Gi } }
+---
+# 只读角色（01 §6，S1 实测的最小权限）：读得到集群和索引的元数据与统计，读不到文档内容
+apiVersion: v1
+kind: Secret
+metadata: { name: sentinel-readonly-role, namespace: targets }
+stringData:
+  roles.yml: |-
+    sentinel_readonly:
+      cluster: [monitor]
+      indices:
+        - names: ["*"]
+          privileges: [monitor, view_index_metadata]

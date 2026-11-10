@@ -1,0 +1,16 @@
+# 01 §5.1 的四个命名空间。chaos-mesh 和 elastic-system 由各自的 Helm chart 创建
+apiVersion: v1
+kind: Namespace
+metadata: { name: sentinel-system }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: sentinel-exec }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: sentinel-data }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: targets }

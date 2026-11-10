@@ -1,0 +1,12 @@
+# 节点宕机（S2 验证通过）：把目标 Pod 的容器换成 pause，ES 节点离开集群。duration 兜底，撤销失败时不会一直挂着。
+# 目标节点写死为 data-2；D4 的 bench 按场景的 params.node 替换。
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata: { name: sentinel-pod-failure, namespace: targets }
+spec:
+  action: pod-failure
+  mode: one
+  duration: "10m"
+  selector:
+    namespaces: [targets]
+    labelSelectors: { statefulset.kubernetes.io/pod-name: es-target-es-data-2 }

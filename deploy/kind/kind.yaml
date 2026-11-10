@@ -1,0 +1,8 @@
+# 本地全链路的 kind 集群（01 §5 形态 B）：1 个控制面 + 2 个 worker。
+# 网络插件用默认的 kindnet：S1 实测它会执行 NetworkPolicy，不需要换 Calico。
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

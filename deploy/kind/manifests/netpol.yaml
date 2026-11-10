@@ -1,0 +1,28 @@
+# 01 §5.1 的入站策略（D1 先做 targets 和 sentinel-data 两条；sentinel-exec 的出入站在 M3 执行器上线时补）
+# 都要放行 elastic-system（ECK operator 要连 ES 才能管理集群）和本命名空间内部（ES 节点之间的 9300 流量）
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: targets-ingress, namespace: targets }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-system } }   # agent-api（只读账号）
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-exec } }     # executor（写账号）
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: chaos-mesh } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: elastic-system } }
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: data-ingress, namespace: sentinel-data }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-system } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-exec } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: elastic-system } }
+        - podSelector: {}

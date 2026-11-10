@@ -1,0 +1,19 @@
+# 网络分区（S2 验证通过）：目标节点与另外两个 ES 节点双向隔离。目标节点写死为 data-2；D4 的 bench 按 params.node 替换。
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata: { name: sentinel-partition, namespace: targets }
+spec:
+  action: partition
+  mode: one
+  duration: "10m"
+  direction: both
+  selector:
+    namespaces: [targets]
+    labelSelectors: { statefulset.kubernetes.io/pod-name: es-target-es-data-2 }
+  target:
+    mode: all
+    selector:
+      namespaces: [targets]
+      labelSelectors: { elasticsearch.k8s.elastic.co/cluster-name: es-target }
+      expressionSelectors:
+        - { key: statefulset.kubernetes.io/pod-name, operator: NotIn, values: [es-target-es-data-2] }

@@ -1,0 +1,29 @@
+# es-memory：Agent 的事故记忆和知识库（01 §2、ADR-004），和 es-target 分开。
+# 单节点，heap 512m：几百条记忆加 768 维向量用不到更多（01 §5）。不注入故障，所以用默认的 local-path 卷。
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: es-memory
+  namespace: sentinel-data
+spec:
+  version: 9.5.3
+  nodeSets:
+    - name: default
+      count: 1
+      config:
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: "-Xms512m -Xmx512m"
+              resources:
+                requests: { memory: 1Gi, cpu: 250m }
+                limits: { memory: 1Gi }
+      volumeClaimTemplates:
+        - metadata: { name: elasticsearch-data }
+          spec:
+            accessModes: [ReadWriteOnce]
+            resources: { requests: { storage: 2Gi } }
