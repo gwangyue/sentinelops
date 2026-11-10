@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：M1 D1 完成（骨架、契约、护栏、compose、kind-up、demo-check 骨架），下一步是 D2 ES 专家包
+- 里程碑：M1 D2 完成（ES 专家包、ToolBackend 三种模式、观测存储），下一步是 D3 调查图只读路径
 - 最新版本：无 · 最新数据集标签：无
