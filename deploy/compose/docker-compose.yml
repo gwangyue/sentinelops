@@ -1,0 +1,32 @@
+# 回放模式（01 §5 形态 A）：postgres + es-memory，CLI 在本机运行。
+# 只绑定 127.0.0.1；es-memory 关闭安全功能只因为它只在本机使用，kind 和 EKS 上都开着。
+name: sentinel
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: sentinel
+      POSTGRES_PASSWORD: sentinel-local
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      retries: 20
+  es-memory:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"   # 和 kind 上的 es-memory 一致（01 §5）
+    ports: ["127.0.0.1:9201:9200"]
+    volumes: [esdata:/usr/share/elasticsearch/data]
+    mem_limit: 1g
+    healthcheck:
+      # 单节点没有副本可分配，yellow 也算可用；等 green 会永远等不到有副本的索引
+      test: ["CMD-SHELL", "curl -sf 'localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null"]
+      interval: 10s
+      retries: 30
+volumes:
+  pgdata:
+  esdata:
