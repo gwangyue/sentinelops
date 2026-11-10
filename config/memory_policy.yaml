@@ -1,0 +1,14 @@
+# 记忆检索和写入策略（05 篇）。整份内容进入 AgentVersion.components.memory_policy，改任何一项都要重新冻结。
+# 权重和阈值都是第一版的手工设定【待定，M-E2 / M-E3 用实验调】（05 §3.3"样本太少，不训练排序模型"）
+version: 1
+fingerprint_weights: { det: 3, fact: 2, chg: 2, obj: 1 }   # 05 §3.2：检测器最能说明问题的类型
+recall:
+  weights: { fingerprint: 2.0, text: 1.0, knn: 1.0 }        # 05 §3.3 三路召回，客户端 RRF
+  candidates: 20
+rerank:
+  weights: { rrf_score: 0.30, fp_jaccard: 0.30, recency: 0.10, outcome: 0.10, corrected: 0.05, helpful_ratio: 0.15 }
+  recency_days: 30                                          # exp(-天数/30)
+  outcome_values: { resolved: 1.0, mitigated: 0.5, no_effect: 0.2 }
+min_score: 0.55          # 低于它不放进上下文："一条不相关的记忆比没有记忆更有害"（05 §3.3）
+merge: { jaccard: 0.8 }  # 05 §3.4：同根因且指纹重合度 ≥ 0.8 就合并；不同根因则互相标记易混淆
+invalidate: { min_hits: 5, min_helpful_ratio: 0.3, max_harm: 2 }   # 05 §3.7

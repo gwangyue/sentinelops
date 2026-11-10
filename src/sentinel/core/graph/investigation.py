@@ -159,14 +159,17 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
             if layers.get("L4")
             else []
         )
-        memories = deps.memory.similar(findings, sheets, deps.policy["memory"]["top_k"]) if layers.get("L5") else []
+        changes = [Change(**{**c, "since": datetime.fromisoformat(c["since"])}) for c in state.get("changes", [])]
+        memories = (
+            deps.memory.similar(findings, sheets, changes, deps.policy["memory"]["top_k"]) if layers.get("L5") else []
+        )
         bundle = build_context(
             state["inv_id"],
             findings,
             sheets,
             deps.load_env(state["target"]),
             deps.policy,
-            changes=[Change(**{**c, "since": datetime.fromisoformat(c["since"])}) for c in state.get("changes", [])],
+            changes=changes,
             knowledge=knowledge,
             memories=memories,
         )
