@@ -28,8 +28,52 @@ def _not_implemented() -> tuple[Status, str]:
     return Status.TODO, ""
 
 
+def _harness(fixture: str, script=None):  # type: ignore[no-untyped-def]
+    # 回放模式 + 假 LLM（golden-demo 规则 1）；和 tests/flows 用同一套组装
+    import tempfile
+
+    from tests.flows.conftest import Harness
+
+    return Harness(Path(tempfile.mkdtemp()), fixture, script)
+
+
+def step1_patrol_healthy() -> tuple[Status, str]:
+    """审计里有 patrol.healthy；这次巡检没有任何模型调用。"""
+    h = _harness("healthy")
+    s = h.run()
+    types = h.audit_types(s["inv_id"])
+    if "patrol.healthy" not in types:
+        return Status.FAIL, f"审计里没有 patrol.healthy：{types}"
+    if h.model.calls:
+        return Status.FAIL, f"健康巡检调用了 {h.model.calls} 次模型"
+    return Status.PASS, ""
+
+
+def step3_diagnosis() -> tuple[Status, str]:
+    """诊断通过 schema 校验；引用的观测 ID 存在且属于本次调查；引文是摘要的子串；H1 标签等于场景真实答案。"""
+    from tests.flows.scripts import diagnose_script
+
+    from sentinel.contracts import Diagnosis, ScenarioSpec
+    from sentinel.core.diagnosis.evidence import check_evidence
+
+    truth = ScenarioSpec.model_validate(yaml.safe_load(SCENARIO.read_text(encoding="utf-8"))).ground_truth
+    h = _harness("disk_watermark", diagnose_script())
+    s = h.run()
+    d = Diagnosis.model_validate(s["diagnosis"])  # schema 校验
+    bad = [c for c in check_evidence(d, h.obs.list(s["inv_id"])) if not c.supported]
+    if bad:
+        return Status.FAIL, f"证据检查不通过：{bad[0].reason}"
+    if not d.hypotheses or d.hypotheses[0].root_cause_label != truth.root_cause_label:
+        return Status.FAIL, "H1 的根因标签和场景真实答案不一致"
+    return Status.PASS, ""
+
+
+SCENARIO = Path(__file__).resolve().parents[1] / "src/sentinel/packs/es/scenarios/disk_watermark.single.yaml"
+
 # 步骤编号 → 检查函数。实现某一步的那天，在这里换成真正的检查。
 CHECKS: dict[int, Callable[[], tuple[Status, str]]] = {n: _not_implemented for n in range(1, 11)}
+CHECKS[1] = step1_patrol_healthy
+CHECKS[3] = step3_diagnosis  # 第 2 步（bench inject）在 D4
 
 
 def run(force_all: bool) -> int:
