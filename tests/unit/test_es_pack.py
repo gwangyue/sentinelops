@@ -56,7 +56,9 @@ def test_finding_object_and_severity(tmp_path: Path) -> None:
     disk = next(f for f in detect(tmp_path, "disk_watermark").findings if f.detector == "es.disk_watermark")
     assert disk.object_ref == "es-target-es-data-2" and disk.severity == "warn"
     limit = next(f for f in detect(tmp_path, "shard_limit").findings if f.detector == "es.shard_limit")
-    assert limit.severity == "critical"  # 分片数已经到达上限
+    # D6 重录后是 warn：X3 留下的隐藏 .tasks 索引让活跃分片变成 17，不能被 3 个节点整除，
+    # 注入的上限算出来是 17/18 = 94%，没到 critical 要求的 100%（录制数据如此，检测器规则没变）
+    assert limit.severity == "warn" and limit.metrics["usage_ratio"] >= 0.9
 
 
 def test_fingerprint_ignores_values() -> None:

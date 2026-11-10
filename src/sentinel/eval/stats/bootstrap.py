@@ -20,10 +20,10 @@ def scenario_of(example_id: str) -> str:
     return example_id.rsplit("#r", 1)[0]
 
 
-def per_example(scores: list[RunScore]) -> dict[str, float]:
+def per_example(scores: list[RunScore], metric: str = "top1_correct") -> dict[str, float]:
     runs: dict[str, list[float]] = defaultdict(list)
     for s in scores:
-        runs[s.example_id].append(float(s.top1_correct))
+        runs[s.example_id].append(float(getattr(s, metric)))
     return {k: statistics.fmean(v) for k, v in runs.items()}
 
 
@@ -40,12 +40,13 @@ class Comparison:
     b_score: float
 
 
-def compare(a: list[RunScore], b: list[RunScore], *, n_boot: int = 2000, seed: int = 0) -> Comparison:
+def compare(
+    a: list[RunScore], b: list[RunScore], *, metric: str = "top1_correct", n_boot: int = 2000, seed: int = 0
+) -> Comparison:
+    """主指标默认是 top1（06 §3.3）。成本、步数等次要指标用同一种按场景聚类的区间，供 06 §7.2 判断"显著"。"""
     excluded = sorted({s.example_id for s in a + b if s.replay_misses > 0})
-    ea, eb = (
-        per_example([s for s in a if s.example_id not in excluded]),
-        per_example([s for s in b if s.example_id not in excluded]),
-    )
+    ea = per_example([s for s in a if s.example_id not in excluded], metric)
+    eb = per_example([s for s in b if s.example_id not in excluded], metric)
     common = sorted(set(ea) & set(eb))
     if not common:
         raise ValueError("两组结果没有共同的用例：确认是同一个数据集标签和 split")
