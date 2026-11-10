@@ -189,7 +189,11 @@ def inject(pack_name: str, scenario_id: str, *, revert: bool = False) -> float:
     spec = load_scenarios(pack_name)[scenario_id]
     wait_green(pack)
     t0 = time.monotonic()  # 从开始注入算起（和 S2 的口径一致）：注入脚本本身的耗时也算在内
-    inject_all(spec)
+    try:
+        inject_all(spec)
+    except BenchError:
+        revert_all(spec)  # 注入做了一半也要撤销，否则残留会污染后面的录制（M2 重录时发生过）
+        raise
     injected = time.monotonic() - t0
     fired = wait_symptom(pack, spec)
     if fired is None or revert:
@@ -218,8 +222,8 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
         fixture.unlink(missing_ok=True)
         wait_green(pack)
         t0 = time.monotonic()
-        inject_all(spec)
         try:
+            inject_all(spec)  # 放进 try：注入做了一半失败时，finally 里同样会撤销
             took = wait_symptom(pack, spec)
             if took is None:
                 # 02 §6：症状没出现就不写用例，防止"故障注入了，但症状没出现"的空用例

@@ -231,6 +231,16 @@ flowchart LR
 
 **节点宕机和网络分区用同一个真实答案 `es.node_unavailable`**：从只读 ES API 看，两者的症状完全相同（节点离开集群、副本未分配，S2 实测检测时间也接近）。Agent 拿不到 K8s 事件或网络层的数据，无法区分。如果分成两个标签，评分会惩罚一个本来无法做出的区分，噪声比信号大（ADR-009）。
 
+**M2 实际规模（2026-11-10，`ds-20261110-3` 之后）**：17 个场景。
+
+| 难度 | dev | heldout |
+|---|---|---|
+| single | disk_watermark、node_down、allocation_disabled、shard_limit | network_partition、replicas_unassignable（hash 分到 heldout）；外部改编 3 个：滚动重启后忘了恢复分配、flood stage 只读、分片数接近上限 |
+| distractor | 上面 4 种 + replicas_unassignable + network_partition，各加一种干扰项（副本数过多的无关索引 / 无害的再平衡设置 / 限速的 update_by_query） | — |
+| compound | allocation_disabled + 磁盘 92% 的红鲱鱼；node_down + 本来就 yellow 的索引 | — |
+
+两种性能类故障（熔断器触发、写入线程池拒绝）没有做：3G 的盘、1G 的 heap 装不下足以触发熔断器的真实数据，ES 先用 `search.max_buckets` 挡住了请求；写入队列默认 10000，也打不满。人为调低熔断器上限或队列长度，就变成了"配置错误"场景，不是原本要测的"负载过高"。
+
 开发集约 15–16 个场景，保留测试集约 5 个。结合 §4.3 的结果：**M2 的结论只能是"大改动有没有效果"**。如果想做更细的调优，要先扩充场景。
 
 ---
