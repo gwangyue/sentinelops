@@ -161,9 +161,16 @@ def sweep(pack: LoadedPack, tb: ToolBackend) -> None:
     indices = tb.call("es.cat_indices")
     if indices.ok:
         for row in indices.raw:
-            tb.call("es.cat_shards", {"index": row["index"]})
+            shards = tb.call("es.cat_shards", {"index": row["index"]})
             tb.call("es.index_settings", {"index": row["index"]})
-    # TODO(edge): allocation_explain 针对每个未分配分片的带参调用；目前只录默认的那一个
+            # 每个未分配分片都录一次带参数的 allocation_explain：Agent 会追问具体分片
+            # （M2 首次评测的 9 次 replay_miss 都是它）
+            for sh in shards.raw if shards.ok else []:
+                if sh["state"] == "UNASSIGNED":
+                    tb.call(
+                        "es.allocation_explain",
+                        {"index": sh["index"], "shard": int(sh["shard"]), "primary": sh["prirep"] == "p"},
+                    )
 
 
 def _target_version() -> str:

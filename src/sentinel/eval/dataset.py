@@ -66,8 +66,11 @@ def append_example(pack: str, ex: EvalExample) -> None:
 
 
 def next_recording(pack: str, scenario_id: str) -> int:
-    existing = [e for e in load_examples(pack) if e.scenario_id == scenario_id]
-    return max((int(e.id.rsplit("#r", 1)[1]) for e in existing), default=0) + 1
+    """按录制历史（fixtures/index.jsonl）编号，而不是按当前数据集：
+    从数据集里撤下的旧录制文件仍然保留（旧的数据集标签要能复现），新录制不能覆盖它们。"""
+    seen = [r["example_id"] for r in read_fixture_index() if r["example_id"].startswith(f"{scenario_id}#r")]
+    seen += [e.id for e in load_examples(pack) if e.scenario_id == scenario_id]
+    return max((int(x.rsplit("#r", 1)[1]) for x in seen), default=0) + 1
 
 
 # ---------- LangSmith 同步 ----------
@@ -82,6 +85,7 @@ class LangSmithLike(Protocol):
     def list_examples(self, *, dataset_id: Any) -> Any: ...
     def create_examples(self, *, dataset_id: Any, examples: list[dict[str, Any]]) -> Any: ...
     def update_examples(self, *, dataset_id: Any, updates: list[dict[str, Any]]) -> Any: ...
+    def delete_examples(self, example_ids: list[str]) -> Any: ...
     def list_dataset_versions(self, *, dataset_id: Any) -> Any: ...
     def update_dataset_tag(self, *, dataset_id: Any, as_of: datetime, tag: str) -> None: ...
 
@@ -122,7 +126,10 @@ def sync(pack: str, note: str, client: LangSmithLike) -> tuple[str, dict[str, in
         client.create_examples(dataset_id=ds.id, examples=new)
     if old:
         client.update_examples(dataset_id=ds.id, updates=old)
-    # TODO(edge): git 里删掉的用例，LangSmith 上还在；目前只增不删
+    # git 里撤下的用例，LangSmith 上也删掉（新版本里不再包含）；旧标签仍然指向旧版本，所以旧结果照样能复现
+    gone = sorted(existing - {r["id"] for r in rows})
+    if gone:
+        client.delete_examples(gone)
     time.sleep(2)  # 新版本生成需要一点时间（S4）
     # 标签打在最新版本的时间上；不能用 dataset.modified_at，它不随添加用例前进（S4 的坑）
     as_of = max(v.as_of for v in client.list_dataset_versions(dataset_id=ds.id))
@@ -133,7 +140,7 @@ def sync(pack: str, note: str, client: LangSmithLike) -> tuple[str, dict[str, in
     with changelog.open("a", encoding="utf-8") as f:
         f.write(
             f"| {tag} | {pack} | {len(examples)} | dev {counts['dev']} / heldout {counts['heldout']} "
-            f"| 新增 {len(new)} | {note.strip()} |\n"
+            f"| 新增 {len(new)}，删除 {len(gone)} | {note.strip()} |\n"
         )
     return tag, counts
 

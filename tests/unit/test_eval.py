@@ -234,6 +234,10 @@ class FakeLS:
         for e in updates:
             self.examples[e["id"]] = e
 
+    def delete_examples(self, example_ids: list[str]) -> None:
+        for i in example_ids:
+            del self.examples[i]
+
     def list_dataset_versions(self, *, dataset_id: Any) -> Any:
         return [SimpleNamespace(as_of=datetime(2026, 11, 10, tzinfo=UTC))]
 
@@ -254,3 +258,25 @@ def test_sync_is_idempotent_and_tags(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert tag1.endswith("-1") and tag2.endswith("-2") and ls.tags == [tag1, tag2]
     with pytest.raises(ValueError):
         ds.sync("es", " ", ls)
+
+
+def test_sync_deletes_examples_removed_from_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ds, "DATASETS", tmp_path)
+    monkeypatch.setattr(ds.time, "sleep", lambda s: None)
+    (tmp_path / "CHANGELOG.md").write_text("| 标签 |\n")
+    ds.append_example("es", _ex("a#r1", "x"))
+    ds.append_example("es", _ex("b#r1", "y"))
+    ls = FakeLS()
+    ds.sync("es", "first", ls)
+    (tmp_path / "es.jsonl").write_text(_ex("b#r1", "y").model_dump_json() + "\n")  # 从 git 里撤下 a#r1
+    ds.sync("es", "drop a", ls)
+    assert sorted(ls.examples) == [ds.example_uuid("b#r1")]
+    assert "删除 1" in (tmp_path / "CHANGELOG.md").read_text()
+
+
+def test_next_recording_never_reuses_numbers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ds, "DATASETS", tmp_path)
+    monkeypatch.setattr(ds, "FIXTURES", tmp_path / "fx")
+    ds.write_fixture_index({"example_id": "a#r1"})
+    ds.write_fixture_index({"example_id": "a#r2"})
+    assert ds.next_recording("es", "a") == 3  # 数据集里已经没有 a 了，但录制文件 r1、r2 还在
