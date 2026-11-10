@@ -1,7 +1,0 @@
-# S1：1 控制面 + 2 worker；先用默认 CNI（kindnet），测它是否执行 NetworkPolicy
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-  - role: worker
-  - role: worker

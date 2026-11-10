@@ -84,7 +84,7 @@ erDiagram
 schema_version: 1
 pack: es                       # 领域名，全局唯一
 version: 0.3.0                 # 专家包自己的语义化版本，会进入 AgentVersion 快照
-supports: ">=9.0,<10"          # 支持的目标系统版本【待验证 ECK 支持的版本】
+supports: ">=9.0,<10"          # 支持的目标系统版本；S1 实测 ECK 3.5.0 部署 ES 9.5.3
 connection:
   kind: elasticsearch
   read_credential: es-readonly     # 引用的凭证名；凭证本身不写在这里
@@ -345,8 +345,10 @@ class AuditEvent(BaseModel):
 class VersionComponents(BaseModel):
     """决定 Agent 行为的全部内容。任何一项变了，就是一个新版本。"""
     prompts: dict[str, str]               # 每段提示词的内容哈希
-    models: dict[str, dict]               # 用途 → {provider, model, temperature, ...}
+    models: dict[str, dict]               # 用途 → {provider, model, temperature, thinking_budget, ...}
                                           # model 必须是固定的版本号，禁止使用 latest 这类别名（G2，见 06 篇 §4.6）
+                                          # thinking_budget 必须写上：思考 token 计入 max_output_tokens，不同预算下输出不同（S3 实测）
+                                          # 内容从配置文件读取，代码里不出现型号字符串（ADR-008）
     tools: dict[str, str]                 # 工具 ID → 工具描述的哈希（工具描述也会影响模型行为）
     context_policy: dict                  # 上下文策略的完整配置（详见 04 篇）
     memory_policy: dict                   # 记忆检索和写入策略的完整配置（详见 05 篇）
@@ -381,12 +383,12 @@ id: es.disk_watermark.with_distractor
 pack: es
 fault:                                  # 主故障
   kind: script                          # script（脚本）| chaos（Chaos Mesh）
-  ref: chaos/es/fill_disk.sh
-  params: { node: es-target-data-2, target_pct: 92 }
+  ref: chaos/es/fill_disk.sh            # 在 kind 节点上写数据卷（不进 ES 容器，否则页缓存会把 ES 撑到 OOMKill，S2 实测）
+  params: { node: es-target-es-data-2, target_pct: 93 }   # 超过高水位 90%，低于 flood stage 95%
 distractors:                            # 干扰项：与根因无关的异常
   - kind: chaos
-    ref: chaos/es/stress_cpu.yaml
-    params: { node: es-target-data-1, load: 70 }
+    ref: chaos/es/net_delay.yaml        # 对另一个节点做短暂的网络延迟（CPU 压力在 kind 上无效，S2 实测）
+    params: { node: es-target-es-data-1, latency_ms: 200, duration_s: 120 }
 ground_truth:
   root_cause_label: es.disk_high_watermark
   acceptable_actions: [es.relocate_shards, es.raise_watermark_temporarily]
@@ -397,7 +399,18 @@ ground_truth:
 difficulty: distractor                  # single（单一故障）| distractor（有干扰项）| compound（组合故障）
 origin: bench                           # bench | external_adapted（从外部真实案例改编，G1）
 source_ref: null                        # external_adapted 时填写原始案例的出处
-symptom_wait: { detector: es.unassigned_shards, timeout_s: 300 }
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }   # S2 实测 5 种故障都在 60 秒内出现症状
+```
+
+节点宕机和网络分区两类场景，真实答案统一用同一个标签（理由见 06 篇 §5.3）：
+
+```yaml
+id: es.node_down.single
+fault: { kind: chaos, ref: chaos/es/pod_failure.yaml, params: { node: es-target-es-data-2 } }
+ground_truth:
+  root_cause_label: es.node_unavailable     # es.network_partition.* 场景也用这个标签
+  # 其余字段同上
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }
 ```
 
 ### 6.2 评测用例（EvalExample，以 git 为准，同步到 LangSmith）
@@ -540,7 +553,7 @@ class MemoryRecord(BaseModel):
 ## 来源与核实说明
 
 1. LangSmith 文档：Manage datasets（每次修改自动生成版本、`update_dataset_tag` 打标签、`list_examples(as_of=..., splits=..., metadata=...)`）— https://docs.langchain.com/langsmith/manage-datasets （2026-11-09 读取）
-2. 未核实，列入 08 的技术验证清单：LangSmith 的 `evaluate()` 是否支持 `num_repetitions` 这类重复运行参数【据记忆：支持】，以及实验结果的 metadata 能否按 `agent_version` 筛选和对比。
+2. S4 实测（spike-results.md）：`evaluate()` 支持 `num_repetitions`；实验的 `metadata` 能按 `agent_version` 筛选（`list_projects(reference_dataset_name=..., metadata=...)`）；数据集标签要按版本的 `as_of` 打，不能用 `modified_at`。ScenarioSpec 示例的超时、磁盘脚本和干扰项按 S2 修改，见 ADR-009。
 3. 其余内容都是设计。
 
 本篇完。下一批：04 上下文、05 记忆、06 评测、07 治理、08 排期。

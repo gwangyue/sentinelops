@@ -81,10 +81,16 @@ gantt
 
 | 天 | 任务（每一项相当于一个 PR） | 引用 |
 |---|---|---|
-| D1 | 仓库骨架（uv、Python 3.12、Typer、FastAPI）；`contracts/` 下的所有 Pydantic 模型；`sdk/` 的基类；docker compose（postgres + es-memory）；`make kind-up`；**工程护栏（G5，§6.4）**；**`make demo-check` 骨架（G6，golden-demo.md）** | 01 §4、03、§6.4、golden-demo |
+| D1 | 仓库骨架（uv、Python 3.12、Typer、FastAPI）；`contracts/` 下的所有 Pydantic 模型；`sdk/` 的基类；docker compose（postgres + es-memory）；`make kind-up`（见下方说明）；**工程护栏（G5，§6.4）**；**`make demo-check` 骨架（G6，golden-demo.md）** | 01 §4、§5、03、§6.4、golden-demo |
 | D2 | ES 专家包：4 个检测器、约 10 个只读工具及其确定性摘要器、fact builder；`ToolBackend` 的三种模式；观测记录存储 | 03 §3、04 §3.2–3.3、01 §3.1 |
 | D3 | 调查图的只读路径：intake → detect → route → build_context（只有 L0 和 L1）→ diagnose（Deep Agent）→ report；`AgentVersion` 冻结；基础审计 | 02 §1、03 §4.1、§5 |
 | D4 | 故障台：4 种 ES 故障的单一变体，每种 2–3 条录制；`dataset sync`；评测运行器（确定性评分器、`num_repetitions=3`）；聚类 bootstrap 比较；多数类和纯规则两个基线 | 06 §3–§5 |
+
+**D1 的 `make kind-up` 要求**（来自 S1/S2，spike 代码在 D1 移到 `deploy/` 后删除）：
+
+1. 脚本为每个 kind worker 节点创建 3G 的 loop 虚拟盘（ext4），挂到 `/mnt/esdata-N`，再创建 StorageClass `es-fixed` 和静态 local PV（由 `spike/s2/fixed-pv.yaml` 移到 `deploy/kind/`）。**不手动操作，重复执行结果不变**：已存在的盘和挂载跳过，已存在的 PV 用 `kubectl apply`。
+2. 填盘脚本（由 `spike/s2/run_faults.py` 的填盘逻辑移到 `deploy/chaos/es/fill_disk.sh`）在注入前做安全检查：目标路径必须是一个 loop 设备的挂载点，并且设备大小不超过 4G；任何一条不满足就拒绝执行、非零退出。防止写满 Docker VM 的系统盘（S2 发现）。
+3. 实测全链路内存（es-target、es-memory、Postgres、Chaos Mesh、agent 都起来之后的 `docker stats` 和 `kubectl top nodes`），写回 `spike-results.md` 和 01 §5。
 
 **M1 验收**：
 
@@ -104,7 +110,7 @@ sentinel eval compare baseline:rules v1                      # 输出差值和 9
 |---|---|---|
 | D5 | 上下文 L3（配置快照 diff）、L4（知识检索）、L5 的接口；预算分配和降级；`ContextBundle` 和上下文报告；`context_recall` 评分器；**L2 压缩（G3）** | 04 全篇 |
 | D6–D7 | 记忆服务：索引 mapping、症状指纹、三路召回 + RRF（或客户端融合）、精排、阈值、确认后写入、合并、反馈更新；以假设形式呈现；`memory_hit` 评分器 | 05 §3 |
-| D8 | 场景扩充到约 20 个（每种故障都加上干扰项变体，再做 2 个组合故障）；**保留测试集里至少一半的场景从外部真实案例改编（G1）**；事故流的构造和顺序运行；记忆快照 | 06 §5.2–5.3、05 §4.2 |
+| D8 | 场景扩充到约 20 个（每种故障都加上干扰项变体，再做 2 个组合故障）；**加入 2 种性能类故障：昂贵聚合导致熔断器触发、写入压力导致线程池拒绝，都用真实查询或写入负载制造**（不用 CPU 压力注入，S2 证明它在 kind 上无效）；**保留测试集里至少一半的场景从外部真实案例改编（G1）**；事故流的构造和顺序运行；记忆快照 | 06 §5.2–5.3、05 §4.2 |
 | D9 | 必做实验：B0（三种笨基线）、E1（事实卡片 vs 原始数据）、M-E1（记忆增益）；规则失败标签 + 评审模型标签；按标签组合分组输出；收敛曲线 | 06 §6、§8、§11 |
 
 **M2 验收**：
@@ -227,6 +233,7 @@ CLAUDE.md 只是建议，规则一多就会被忽略；必须执行的规则要�
 | 评测必须指定数据集版本标签 | 评测运行器：参数为空或为 `latest` 时直接报错 | 命令失败 |
 | 被测 Agent 不开缓存 | 评测运行器：检测到 `LANGSMITH_TEST_CACHE` 时，只对评审模型生效 | 命令失败或警告 |
 | 模型不能用别名（G2） | `sentinel version freeze` 检查模型名称 | 拒绝冻结 |
+| 模型型号只在配置文件里出现（ADR-008） | 测试：扫描 `src/`，不允许出现模型型号字符串（例如匹配 `gemini-`、`claude-`、`gpt-` 的字符串字面量） | 测试失败 |
 | 每次编辑之后跑快速检查 | Claude Code 的 PostToolUse hook：对改动的文件跑 lint 和类型检查 | 在会话里报告错误 |
 
 ### 6.5 独立审阅（G7）
@@ -256,6 +263,7 @@ docs/design/03-contracts.md、08-plan.md 中本里程碑的任务和验收、gol
 | 本机内存跑不动 kind 全链路 | 中 | M1 的录制受阻 | S1 验证；降级为 2 节点；必要时开一台云主机临时做录制 |
 | 故障注入不稳定，症状时有时无 | 中 | 数据集质量差 | 每个场景都检查症状是否出现；不稳定的场景先不纳入 |
 | CPU 热点类故障在 kind 上做不出来（S2 实测：所有节点共用一台 VM，`os.cpu` 读到的是整个 VM 的值） | 已发生 | 少一类故障 | M1 先用 S2 验证通过的 5 种；热点改为用真实查询负载打指定分片，放到 M2 扩充场景时再做 |
+| 已验证的故障集中在分配类（磁盘水位、节点不可用、分配被关、分片上限，症状都是未分配分片或建索引失败） | 高 | 纯规则基线可能在单一故障上接近满分，显不出 Agent 的价值 | M2 D8 加入 2 种性能类故障和干扰项、组合故障；比较时按难度分组报告，不只看总分 |
 | 记忆增益不显著 | 中 | 主亮点缺少证据 | 先排查原因；如实报告"在什么条件下有效、什么条件下无效"同样是有价值的结论 |
 | 评测费用超出预期 | 低 | 迭代变慢 | 运行前估算费用；开发阶段用 1 次重复，正式比较时用 3 次 |
 | 求职面试占用时间 | 高 | 进度延后 | M2 是第一个决策点，到那时故事已经可以讲 |

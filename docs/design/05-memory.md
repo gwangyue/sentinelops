@@ -101,6 +101,7 @@ flowchart LR
 | 人修正过的根因，标记 `corrected=true` | 这类记忆最有价值：它记录的正是模型容易出错的地方 |
 | 修复没有效果，也可以写入 | `outcome=no_effect`。"这个动作对这个问题没用"也是经验 |
 | 记忆的文本由系统模板生成，不直接用模型的原话 | 防止注入内容随着模型的输出混进记忆（§3.6） |
+| `symptom_text` 的模板用英文，字段用 standard 分词 | 模板只由检测器 ID、事实键和档位拼成，英文用 standard 分词就够了，不需要中文分词插件（S5 发现中文按单字切分，召回很粗） |
 
 ### 3.2 症状指纹：怎样判断"像不像"
 
@@ -151,7 +152,7 @@ weights = {"fingerprint": 2.0, "text": 1.0, "knn": 1.0}   # 计入 memory_policy
     "rrf": {
       "retrievers": [
         { "retriever": { "standard": { "query": { "terms": { "fingerprint": ["det:es.unassigned_shards", "fact:node.disk_used_pct:high"] } } } }, "weight": 2.0 },
-        { "standard": { "query": { "match": { "symptom_text": "未分配分片 磁盘使用率高 集群黄色" } } } },
+        { "standard": { "query": { "match": { "symptom_text": "unassigned shards; data node disk usage high; cluster yellow" } } } },
         { "knn": { "field": "embedding", "query_vector": [0.1, 0.2], "k": 20, "num_candidates": 100 } }
       ],
       "rank_window_size": 20,

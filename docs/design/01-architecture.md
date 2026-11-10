@@ -170,6 +170,7 @@ sentinelops/
 │   ├── api/                      # FastAPI
 │   ├── cli/                      # Typer
 │   └── mcp/                      # 只读 MCP 服务
+├── config/                       # models.yaml：各用途的模型型号和参数；代码里不写型号（ADR-008）
 ├── datasets/                     # 场景定义（以 git 为准，同步到 LangSmith）
 ├── fixtures/                     # 回放录制（大文件放 S3，git 里只放索引）
 ├── deploy/
@@ -193,8 +194,9 @@ sentinelops/
 
 **本地资源（S1 实测，见 spike-results.md）**：
 
-- es-target：3 节点，每个节点 1Gi heap、容器上限 2Gi。kind 的 3 个节点合计约 6.1 GiB（Docker Desktop 分配 9.7 GiB），余量约 3.6 GiB，留给 es-memory、MySQL、Postgres、agent 和 Chaos Mesh。
-- 机器 16 GiB 时，Docker Desktop 至少分配 10 GiB。放不下时，再把 es-target 每个节点的 heap 降到 512Mi。
+- es-target：3 节点，每个节点 1Gi heap、容器上限 2Gi。S1 时 kind 的 3 个节点合计约 6.1 GiB（当时 Docker Desktop 分配 9.7 GiB）。
+- Docker Desktop 已调到 12 GiB（机器 16 GiB）。es-memory 单节点，heap 512Mi：几百条记忆加 768 维向量，用不到更多。
+- 全链路（再加上 es-memory、MySQL、Postgres、agent 和 Chaos Mesh）的内存在 M1 D1 实测，写回 spike-results.md 和本节。放不下时，先把 es-target 每个节点的 heap 降到 512Mi。
 - es-target 的数据卷必须是**固定大小**的（每个 worker 节点上用 loop 设备建 3G ext4，做成静态 local PV）。kind 默认的 local-path 卷和 Docker VM 共用一块盘，磁盘填充故障会把整个 VM 写满（S2 发现）。
 - 所有 kubectl 和 helm 命令都显式指定 `--context kind-sentinel`，防止误操作本机的其他集群。
 

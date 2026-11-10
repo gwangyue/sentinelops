@@ -10,3 +10,5 @@ fixtures/**/*.jsonl
 .ruff_cache/
 *.tfstate*
 .terraform/
+*.swp
+spike/
