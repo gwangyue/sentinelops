@@ -41,15 +41,16 @@ def _yaml_blocks() -> list[dict]:  # type: ignore[type-arg]
     return [yaml.safe_load(b) for b in re.findall(r"```yaml\n(.*?)```", DOC.read_text(encoding="utf-8"), re.S)]
 
 
-def test_doc_pack_example_enforces_output_budget() -> None:
-    pack = _yaml_blocks()[0]
-    # 03 §3.1 的示例里 es.hot_threads 没写 output_budget_tokens，按同一节的约束它不允许注册
-    with pytest.raises(ValidationError, match="output_budget_tokens"):
-        PackManifest.model_validate(pack)
-    for t in pack["tools"]:
-        t.setdefault("output_budget_tokens", 800)
-    m = PackManifest.model_validate(pack)
+def test_doc_pack_example_parses() -> None:
+    m = PackManifest.model_validate(_yaml_blocks()[0])
     assert m.connection.write_credential == "es-executor"
+    assert all(t.output_budget_tokens > 0 for t in m.tools)
+
+
+def test_tool_without_output_budget_rejected() -> None:
+    # 03 §3.1 约束：没有 output_budget_tokens 的工具不允许注册
+    with pytest.raises(ValidationError, match="output_budget_tokens"):
+        ToolDecl.model_validate({"id": "t", "entry": "m:f"})
 
 
 def test_doc_scenario_examples_parse() -> None:

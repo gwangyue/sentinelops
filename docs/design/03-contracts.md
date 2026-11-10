@@ -104,6 +104,7 @@ tools:                         # 只读工具，诊断 Agent 和 MCP 可以使�
   - id: es.hot_threads
     entry: sentinel.packs.es.tools.nodes:hot_threads
     mcp_export: false          # 输出很长，而且可能包含敏感内容
+    output_budget_tokens: 600  # 摘要器只保留最热的前 N 个线程（04 §3.3）
 actions:                       # 动作目录，详细格式见 4.2
   - es.relocate_shards
   - es.raise_watermark_temporarily
