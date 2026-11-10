@@ -288,7 +288,7 @@ kind 默认的网络插件 kindnet（kind v0.33）**会执行** NetworkPolicy（
 
 | 主体 | es-target | mysql-target | Postgres | es-memory | 外网 |
 |---|---|---|---|---|---|
-| 诊断 Agent（运行在 agent-api 里） | **只读**：cluster `monitor`；indices `*` 的 `monitor`、`view_index_metadata`（S1 实测：10 个只读 API 都够用；读不到文档内容） | **只读**：`PROCESS`、读取 `performance_schema` | 读写 | 读 | Gemini、LangSmith |
+| 诊断 Agent（运行在 agent-api 里） | **只读**：cluster `monitor`；indices `*` 的 `monitor`、`view_index_metadata`（S1 实测：10 个只读 API 都够用；读不到文档内容。M2 D6 实测：`_index_template`、`_nodes` 可读；`_ilm/policy` 返回 403，按决定不加权限，ILM 不进 L3 变更层） | **只读**：`PROCESS`、读取 `performance_schema` | 读写 | 读 | Gemini、LangSmith |
 | 记忆写入（agent-api，人确认之后） | — | — | 读写 | **写** | — |
 | 执行器 | **只有动作目录需要的那些写权限** | 同左 | 读审批、写审计 | — | **禁止** |
 | 评测运行器 | 回放模式下不访问 | 同左 | 读写 | 读写（消融实验用单独的索引） | Gemini、LangSmith |
