@@ -1,15 +1,16 @@
 """观测记录存储（03 §3.3：证据链的根）。
 
-负责：原始输出写成文件（raw_ref），观测记录追加到每次调查一份的 JSONL 索引；读取时校验 sha256。
-不负责：Postgres 里的观测索引（01 §2）——D3 和 checkpointer、审计表一起做，接口保持不变；
-        S3 上的大文件存储（M4）。
+负责：原始输出写成文件（raw_ref），观测记录写进索引；读取时校验 sha256。
+      索引有两种：调查图运行时写进 Store（Postgres，D3）；开发命令（sentinel detect / tools call）
+      没有数据库时写进每次调查一份的 JSONL 文件。
+不负责：S3 上的大文件存储（M4）。
 """
 
 import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from ulid import ULID
 
@@ -20,21 +21,43 @@ class TamperedObservationError(RuntimeError):
     pass
 
 
+class ObservationIndex(Protocol):
+    def add_observation(self, obs: Observation) -> None: ...
+    def observations(self, investigation_id: str) -> list[Observation]: ...
+
+
+class FileIndex:
+    """每次调查一份 index.jsonl，放在原始输出旁边。"""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def add_observation(self, obs: Observation) -> None:
+        p = self.root / obs.investigation_id / "index.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(obs.model_dump_json() + "\n")
+
+    def observations(self, investigation_id: str) -> list[Observation]:
+        p = self.root / investigation_id / "index.jsonl"
+        if not p.exists():
+            return []
+        return [Observation.model_validate_json(line) for line in p.read_text(encoding="utf-8").splitlines()]
+
+
 def _raw_bytes(raw: Any) -> bytes:
     return json.dumps(raw, ensure_ascii=False, sort_keys=True).encode()
 
 
 class ObservationStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, index: ObservationIndex | None = None) -> None:
         self.root = root
+        self.index = index or FileIndex(root)
 
     @staticmethod
     def new_id() -> str:
         # 先分配 ID 再写入：摘要被截断时，截断说明里要引用这条观测的 ID
         return f"obs_{ULID()}"
-
-    def _index(self, investigation_id: str) -> Path:
-        return self.root / investigation_id / "index.jsonl"
 
     def put(
         self,
@@ -64,15 +87,11 @@ class ObservationStore:
             digest=digest,
             created_at=datetime.now(UTC),
         )
-        with self._index(investigation_id).open("a", encoding="utf-8") as f:
-            f.write(obs.model_dump_json() + "\n")
+        self.index.add_observation(obs)
         return obs
 
     def list(self, investigation_id: str) -> list[Observation]:
-        p = self._index(investigation_id)
-        if not p.exists():
-            return []
-        return [Observation.model_validate_json(line) for line in p.read_text(encoding="utf-8").splitlines()]
+        return self.index.observations(investigation_id)
 
     def get(self, investigation_id: str, obs_id: str) -> tuple[Observation, Any]:
         """返回观测记录和原始输出。原始文件被改过就报错：证据链不能建立在被篡改的数据上。"""
