@@ -96,10 +96,10 @@ gantt
 
 ```
 sentinel bench record es.disk_watermark.single --n 2        # 能录制
-sentinel dataset sync --pack es                              # 打出版本标签
-sentinel eval run --pack es --split dev --version v1 --reps 3
-sentinel eval baseline --pack es --split dev                 # 多数类、纯规则
-sentinel eval compare baseline:rules v1                      # 输出差值和 95% 区间
+sentinel dataset sync --pack es --note "..."                 # 打出版本标签 ds-YYYYMMDD-n
+sentinel eval run --pack es --split dev --dataset-tag <标签> --reps 3      # 评测当前版本；标签必填（08 §6.4）
+sentinel eval baseline --pack es --split dev --dataset-tag <标签>          # 多数类、纯规则
+sentinel eval compare baseline:rules v<N> --dataset-tag <标签>             # 输出差值和 95% 区间
 ```
 
 能看到 v1 和纯规则基线的比较结果（有区间），就算通过。**无论 v1 是赢是输，都是一个有价值的结果**。

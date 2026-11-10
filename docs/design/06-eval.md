@@ -330,7 +330,7 @@ top-1（dev，95% 区间）
 | 运行 | `evaluate(target, data=..., evaluators=[...], num_repetitions=3, max_concurrency=4, metadata={"agent_version": ..., "dataset_tag": ...}, experiment_prefix="v14")` [1][2]（S4 已确认，langsmith 0.10.10）。注意：metadata 里不能用 `dataset_version` 这个键，SDK 会用时间戳覆盖它，所以标签名用 `dataset_tag`；按版本筛选用 `list_projects(reference_dataset_name=..., metadata={"agent_version": ...})` |
 | 打标签 | `update_dataset_tag(as_of=...)` 的 `as_of` 要取 `list_dataset_versions()` 里最新版本的时间。不能用 `dataset.modified_at`：它不随添加用例前进，标签会指向一个空版本（S4 踩过的坑） |
 | 评分 | 确定性评分器作为 evaluator 函数，结果写入 LangSmith 的 feedback |
-| 统计 | 用 SDK 把结果拉到本地，用自己的代码计算聚类 bootstrap。LangSmith 界面上显示的是平均分和标准差 [2]，没有按场景聚类的区间【推断】 |
+| 统计 | 评测运行器在写 feedback 的同时，把每条 RunScore 存到本地 `var/eval/<版本>__<标签>__<split>.jsonl`，聚类 bootstrap 直接读本地文件（M1 D4 实现；从 LangSmith 拉回结果是后续的 TODO）。LangSmith 界面上显示的是平均分和标准差 [2]，没有按场景聚类的区间【推断】 |
 | 查看 | 单个用例的完整 Trace，以及两个实验之间逐个用例的对比，直接看 LangSmith 界面 |
 
 **分工**：LangSmith 负责存储、运行、查看；聚类统计、失败归类、门槛判断、收敛曲线是本项目自己的代码。**这部分正是 LangSmith 不提供、而本项目要展示深度的地方。**

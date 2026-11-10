@@ -1,0 +1,10 @@
+# 纯规则基线（06 §4.5）：人写的"检测器组合 → 根因"映射表，不用 LLM。
+# 它代表"一个懂 ES 的人只看告警会怎么判断"：如果它在单一故障上已经接近满分，LLM 的价值就要到
+# "有干扰项"和"组合故障"里去找（06 §4.5；08 §7 风险表）。
+# 按顺序匹配：第一条 when_all 全部出现在本次触发的检测器里，就给出它的 label。
+rules:
+  - { when_all: [es.node_count], label: es.node_unavailable }          # 节点少了，最直接的解释
+  - { when_all: [es.disk_watermark], label: es.disk_high_watermark }
+  - { when_all: [es.shard_limit], label: es.shard_limit_reached }
+  - { when_all: [es.unassigned_shards], label: es.allocation_disabled } # 只有未分配、没有别的信号：猜分配被关了
+default: es.unknown
