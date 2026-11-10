@@ -17,7 +17,7 @@
 | # | 步骤 | 命令 | 屏幕上应该看到 | 机器检查（`demo-check`） | 打开时机 |
 |---|---|---|---|---|---|
 | 1 | 集群健康，巡检不调用 LLM | `sentinel patrol es-target` | "健康，0 个问题，用时 N 秒" | 审计里有 `patrol.healthy`；这次巡检没有任何模型调用记录 | M1 |
-| 2 | 注入故障 | `sentinel bench inject es.disk_watermark.single` | 故障已注入，等待症状出现 | 检测器 `es.unassigned_shards` 在 300 秒内触发 | M1 |
+| 2 | 注入故障 | `sentinel bench inject es.disk_watermark.single` | 故障已注入，等待症状出现 | 检测器 `es.unassigned_shards` 在 120 秒内触发（S2 实测，ADR-009） | M1 |
 | 3 | 诊断：有证据、有排序 | `sentinel investigations show <inv>` | 最多 3 个假设，每个都有置信度和证据（观测 ID + 原文片段） | 诊断能通过 schema 校验；所有引用的观测 ID 都存在、都属于本次调查；原文片段是对应摘要的子串；H1 的根因标签和场景的真实答案一致（只在本步检查） | M1 |
 | 4 | 上下文报告 | `sentinel investigations context <inv>` | 每一层用了多少 token、放了什么、删了什么、为什么删 | ContextBundle 能通过 schema 校验；L0 和异常事实没有被删除；各层 token 总数不超过预算 | M2 |
 | 5 | 修复方案 | （第 3 步的输出里就有） | 动作、参数、预演结果、影响范围、回滚方法、验证条件、有效期 | 动作在白名单里；参数能通过 `params_schema` 校验；`plan_hash` 能由确定性代码重新计算出来 | M3 |

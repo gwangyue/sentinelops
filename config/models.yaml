@@ -1,0 +1,21 @@
+# 各用途的模型型号和参数（ADR-008）。型号只允许出现在这里，src/ 里不写型号字符串（08 §6.4 有测试扫描）。
+# 型号必须是固定版本，不能用 *-latest 之类的别名（G2）；加载时校验。
+# 这里的内容会进入 AgentVersion.components.models（03 §5.2），改任何一项都要重新冻结版本。
+schema_version: 1
+purposes:
+  diagnosis:                       # 诊断 Agent：Flash 档
+    provider: google
+    model: gemini-3.7-flash
+    temperature: 1.0
+    thinking_budget: 1024          # 思考 token 计入 max_output_tokens（S3 实测），两者一起定【待定，D3 调】
+    max_output_tokens: 8192
+  evaluator:                       # 评审模型：只给失败归类打语义标签，不参与上线决策；preview 版，出问题改这里
+    provider: google
+    model: gemini-3.1-pro-preview
+    temperature: 0.0
+    thinking_budget: 2048
+    max_output_tokens: 8192
+  embedding:                       # 记忆的向量检索（05 §3.3）
+    provider: google
+    model: gemini-embedding-001
+    output_dimensionality: 768
