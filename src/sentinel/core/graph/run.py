@@ -7,6 +7,7 @@
 import os
 from pathlib import Path
 
+from langchain_core.tracers.langchain import wait_for_all_tracers
 from langgraph.checkpoint.postgres import PostgresSaver
 from ulid import ULID
 
@@ -59,9 +60,17 @@ def patrol(target: str, pack: str = "es", mode: Mode = Mode.LIVE, fixture: Path 
             # thread_id = 调查 ID（01 §3.2）：以后 approve / confirm 的 interrupt 恢复时用它找回状态
             final: InvState = graph.invoke(  # type: ignore[assignment]
                 {"inv_id": inv_id, "target": target, "pack": pack, "mode": "report_only"},
-                {"configurable": {"thread_id": inv_id}},
+                {
+                    "configurable": {"thread_id": inv_id},
+                    # 外层图的 trace 也带上调查信息，才能在 LangSmith 里按调查找到整棵调用树（01 §3.4）
+                    "run_name": "investigation",
+                    "tags": [f"target:{target}", f"backend:{mode.value}"],
+                    "metadata": {"investigation_id": inv_id, "target": target, "backend": mode.value},
+                },
             )
         finally:
             for b in deps._backends.values():
                 b.close()
+            # CLI 进程很快就退出，后台线程里还没上传的 trace 会丢（D3 实测丢了 3 次调查的 trace）
+            wait_for_all_tracers()
     return {**final, "inv_id": inv_id}
