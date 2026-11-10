@@ -46,3 +46,55 @@ settings = ReadTool(
     fetch=_settings_fetch,
     summarize=_settings_summary,
 )
+
+
+def _nodes_fetch(http: ReadOnlyHttp, args: Args) -> Any:
+    # 只取身份信息（名称、角色、版本）：比较节点列表的快照用，不用 nodes_stats（全是会变的数值）
+    return http.get("/_nodes", params={"filter_path": "nodes.*.name,nodes.*.roles,nodes.*.version"})
+
+
+def _nodes_summary(raw: Any, args: Args) -> str:
+    rows = sorted(raw.get("nodes", {}).items(), key=lambda kv: kv[1]["name"])
+    return "\n".join(
+        f"{n['name']} id={nid[:8]} version={n['version']} roles={','.join(sorted(n['roles']))}" for nid, n in rows
+    )
+
+
+nodes_info = ReadTool(
+    description="集群里的节点列表：名称、ID、版本、角色。看哪些节点在、哪些不在。",
+    fetch=_nodes_fetch,
+    summarize=_nodes_summary,
+)
+
+
+def _templates_fetch(http: ReadOnlyHttp, args: Args) -> Any:
+    return http.get(
+        "/_index_template",
+        params={
+            "filter_path": "index_templates.name,index_templates.index_template.index_patterns,"
+            "index_templates.index_template.priority,index_templates.index_template._meta.managed"
+        },
+    )
+
+
+def _builtin(t: dict[str, Any]) -> bool:
+    # ES 自带的模板：_meta.managed=true，或者名字以 . 开头（monitoring 模板没有 managed 标记，M2 D6 实测）
+    meta = (t.get("index_template") or {}).get("_meta") or {}
+    return bool(meta.get("managed")) or str(t["name"]).startswith(".")
+
+
+def _templates_summary(raw: Any, args: Args) -> str:
+    rows = sorted(raw.get("index_templates", []), key=lambda t: t["name"])
+    user = [t for t in rows if not _builtin(t)]  # 内置模板很多且和业务无关，只计数
+    lines = [f"templates={len(rows)} user_defined={len(user)}"]
+    for t in user:
+        it = t.get("index_template") or {}
+        lines.append(f"{t['name']} patterns={','.join(it.get('index_patterns', []))} priority={it.get('priority')}")
+    return "\n".join(lines)
+
+
+index_templates = ReadTool(
+    description="索引模板：总数，以及用户自定义模板的匹配模式和优先级（内置模板只计数）。",
+    fetch=_templates_fetch,
+    summarize=_templates_summary,
+)

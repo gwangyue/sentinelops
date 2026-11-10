@@ -150,6 +150,21 @@ def wait_symptom(pack: LoadedPack, spec: ScenarioSpec) -> float | None:
     return _wait(fired, spec.symptom_wait.timeout_s)
 
 
+# 注入前快照（L3 变更层的"上一次快照"）：只录不随负载变化的配置类信息
+SNAPSHOT_TOOLS = ("es.cluster_settings", "es.nodes_info", "es.index_templates")
+
+
+def snapshot(pack: LoadedPack, fixture: Path) -> None:
+    """集群健康时录一份快照（phase=before），相当于"上一次巡检"留下的那份（05 §3.5）。"""
+    tb = open_backend(pack, f"inv_snap_{ULID()}", Mode.RECORD, ObservationStore(SCRATCH), fixture)
+    tb.phase = "before"
+    try:
+        for t in SNAPSHOT_TOOLS:
+            tb.call(t)
+    finally:
+        tb.close()
+
+
 def sweep(pack: LoadedPack, tb: ToolBackend) -> None:
     """录制：检测器和 fact builder 的调用 + 每个工具的默认调用 + 每个非 green 索引的带参调用。"""
     run_detect(pack, TARGET, tb, load_env(TARGET))
@@ -221,6 +236,7 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
         fixture = REPO / rel
         fixture.unlink(missing_ok=True)
         wait_green(pack)
+        snapshot(pack, fixture)  # 集群健康时的快照，相当于"上一次巡检"留下的那份（L3 变更层用）
         t0 = time.monotonic()
         try:
             inject_all(spec)  # 放进 try：注入做了一半失败时，finally 里同样会撤销

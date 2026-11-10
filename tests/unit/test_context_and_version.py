@@ -94,7 +94,7 @@ def test_freeze_rejects_empty_note_dirty_tree_and_alias() -> None:
 def test_components_cover_root_causes_and_tool_args() -> None:
     c = collect_components([PACK], code_sha="a")
     assert "root_causes:es" in c.prompts and "diagnose.md" in c.prompts
-    assert len(c.tools) == 11 and c.models["diagnosis"]["thinking_budget"]
+    assert len(c.tools) == 13 and c.models["diagnosis"]["thinking_budget"]
 
 
 def test_running_with_uncommitted_changes_is_refused() -> None:

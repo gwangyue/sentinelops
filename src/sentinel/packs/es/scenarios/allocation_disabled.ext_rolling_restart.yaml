@@ -14,4 +14,4 @@ ground_truth:
 difficulty: single
 origin: external_adapted
 source_ref: "Elastic 官方文档 Full Cluster restart and rolling restart procedures（步骤 1 与步骤 7）：https://www.elastic.co/docs/deploy-manage/maintenance/start-stop-services/full-cluster-restart-rolling-restart-procedures （2026-11-10 读取）"
-symptom_wait: { detector: es.unassigned_shards, timeout_s: 150 }
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 180 }   # 要等 data-2 重启并重新加入：实测 78–134 秒，120 秒偶尔不够（M2 D6）

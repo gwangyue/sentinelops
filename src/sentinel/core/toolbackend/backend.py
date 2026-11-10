@@ -10,6 +10,7 @@ import json
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -28,15 +29,28 @@ class Mode(StrEnum):
 
 
 class ReplayIndex:
-    """录制文件：每行 {tool, args, raw, error, phase}。同一个键录到多次时按顺序返回，用完后一直返回最后一次。"""
+    """录制文件：每行 {tool, args, raw, error, phase, ts}。同一个键录到多次时按顺序返回，用完后一直返回最后一次。
+
+    phase：before = 注入故障之前的快照（L3 变更层的"上一次快照"，05 §3.5"回放时基线也从录制里读"）；
+           pre = 故障状态（工具调用回放的就是这些）；post = 执行动作之后（M3）。
+    """
 
     def __init__(self, path: Path) -> None:
         self._items: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
+        self._before: dict[str, dict[str, Any]] = {}
         for line in path.read_text(encoding="utf-8").splitlines():
             rec = json.loads(line)
-            # TODO(edge): phase="post"（执行动作之后的观测，M3）要按执行进度切换，现在只读 pre
-            if rec.get("phase", "pre") == "pre":
-                self._items[replay_key(rec["tool"], rec["args"])].append(rec)
+            key = replay_key(rec["tool"], rec["args"])
+            phase = rec.get("phase", "pre")
+            if phase == "pre":
+                self._items[key].append(rec)
+            elif phase == "before":
+                self._before[key] = rec
+            # TODO(edge): phase="post"（执行动作之后的观测，M3）要按执行进度切换
+
+    def before(self, tool: str, args: dict[str, Any]) -> dict[str, Any] | None:
+        """注入之前的快照记录；旧录制没有快照时返回 None。"""
+        return self._before.get(replay_key(tool, args))
 
     def take(self, key: str) -> dict[str, Any] | None:
         q = self._items.get(key)
@@ -63,6 +77,7 @@ class ToolBackend:
         *,
         http: Callable[[], ReadOnlyHttp] | None = None,
         fixture: Path | None = None,
+        phase: str = "pre",
     ) -> None:
         if mode is not Mode.REPLAY and http is None:
             raise ValueError("live / record 模式需要连接")
@@ -74,6 +89,7 @@ class ToolBackend:
         self._fixture = fixture
         self._replay = ReplayIndex(fixture) if mode is Mode.REPLAY and fixture else None
         self._memo: dict[str, ToolResult] = {}
+        self.phase = phase  # 只影响 Record 模式写进录制的 phase 字段
 
     def call(self, tool: str, args: Mapping[str, Any] | None = None) -> ToolResult:
         spec = self.tools.get(tool)
@@ -118,7 +134,8 @@ class ToolBackend:
             rec = {
                 "tool": tool,
                 "args": cargs,
-                "phase": "pre",
+                "phase": self.phase,
+                "ts": datetime.now(UTC).isoformat(),  # L3 变更层的窗口判断用快照时间
                 "raw": fetched.raw if fetched.status == "ok" else None,
                 "error": fetched.raw if fetched.status == "error" else None,
             }

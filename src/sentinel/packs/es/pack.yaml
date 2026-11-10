@@ -16,6 +16,8 @@ tools:
   # output_budget_tokens 是摘要进入上下文前的上限（03 §3.1 约束：必填）
   - { id: es.cluster_health,     entry: "sentinel.packs.es.tools.cluster:health",            mcp_export: true,  output_budget_tokens: 150 }
   - { id: es.cluster_settings,   entry: "sentinel.packs.es.tools.cluster:settings",          mcp_export: true,  output_budget_tokens: 400 }
+  - { id: es.nodes_info,         entry: "sentinel.packs.es.tools.cluster:nodes_info",        mcp_export: true,  output_budget_tokens: 300 }
+  - { id: es.index_templates,    entry: "sentinel.packs.es.tools.cluster:index_templates",   mcp_export: true,  output_budget_tokens: 300 }  # ILM 策略不做：只读角色返回 403（M2 D6 实测）
   - { id: es.cat_allocation,     entry: "sentinel.packs.es.tools.allocation:cat_allocation", mcp_export: true,  output_budget_tokens: 400 }
   - { id: es.cat_shards,         entry: "sentinel.packs.es.tools.allocation:cat_shards",     mcp_export: true,  output_budget_tokens: 800 }
   - { id: es.allocation_explain, entry: "sentinel.packs.es.tools.allocation:allocation_explain", mcp_export: true, output_budget_tokens: 800 }

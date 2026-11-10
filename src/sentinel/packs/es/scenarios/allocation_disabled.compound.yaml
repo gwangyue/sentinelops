@@ -15,4 +15,4 @@ ground_truth:
   key_facts: [cluster.unassigned_shards, node.disk_used_pct]
 difficulty: compound
 origin: bench
-symptom_wait: { detector: es.unassigned_shards, timeout_s: 150 }
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 180 }   # 要等 data-2 重启并重新加入：实测 78–134 秒，120 秒偶尔不够（M2 D6）

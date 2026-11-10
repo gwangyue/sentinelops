@@ -31,7 +31,7 @@ def detect(tmp_path: Path, name: str):  # type: ignore[no-untyped-def]
 
 
 def test_pack_loads() -> None:
-    assert len(PACK.tools) == 11 and len(PACK.detectors) == 4 and len(PACK.fact_builders) == 1
+    assert len(PACK.tools) == 13 and len(PACK.detectors) == 4 and len(PACK.fact_builders) == 1
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED))
