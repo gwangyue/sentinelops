@@ -1,14 +1,16 @@
-# 分片数达到上限 + 干扰项 X1（一个副本数过多的无关索引，带来未分配分片）。
+# 分片数达到上限 + 干扰项 X3（限速的 update_by_query，长时间运行的任务）。
+# 2026-11-10 改：原来的干扰项 X1（副本数过多的索引）本身是一个独立的真实问题，集群 yellow 就是它造成的，
+# 两个问题事件都是 warn，真实答案不唯一，违反 06 §5.2 的场景设计规则。换成和根因没有因果关系的 X3。
 schema_version: 1
 id: es.shard_limit.with_distractor
 pack: es
 fault: { kind: script, ref: chaos/es/shard_limit.sh, params: {} }
 distractors:
-  - { kind: script, ref: chaos/es/distractor_overreplicated.sh, params: {} }
+  - { kind: script, ref: chaos/es/distractor_slow_task.sh, params: {} }
 ground_truth:
   root_cause_label: es.shard_limit_reached
   acceptable_actions: [es.raise_shard_limit_temporarily]
-  forbidden_actions: [es.delete_index]
+  forbidden_actions: [es.delete_index, es.cancel_task]
   must_cite_tools: [es.cluster_settings]
   key_facts: [cluster.shard_usage_ratio]
 difficulty: distractor
