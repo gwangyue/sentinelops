@@ -114,9 +114,13 @@ def version_freeze(note: Annotated[str, typer.Option(help="这一版改了什么
     from sentinel.core.graph.run import load_packs
     from sentinel.core.store import open_store
     from sentinel.core.versioning.components import behavior_dirty, collect_components
-    from sentinel.core.versioning.freeze import freeze
+    from sentinel.core.versioning.freeze import FreezeError, freeze
 
-    v, created = freeze(open_store(), collect_components(list(load_packs().values())), note, dirty=behavior_dirty())
+    try:
+        v, created = freeze(open_store(), collect_components(list(load_packs().values())), note, dirty=behavior_dirty())
+    except FreezeError as e:
+        typer.echo(f"拒绝冻结：{e}", err=True)
+        raise typer.Exit(1) from e
     typer.echo(f"{'新建' if created else '复用'} v{v.seq} {v.hash[:19]}…  parent={(v.parent or '-')[:19]}  {v.note}")
 
 
@@ -140,9 +144,14 @@ def patrol(
 
     from sentinel.core.graph.run import patrol as run_patrol
     from sentinel.core.toolbackend import Mode
+    from sentinel.core.versioning.freeze import FreezeError
 
     t0 = time.monotonic()
-    s = run_patrol(target, pack, Mode(backend), fixture)
+    try:
+        s = run_patrol(target, pack, Mode(backend), fixture)
+    except FreezeError as e:
+        typer.echo(f"拒绝开始调查：{e}", err=True)
+        raise typer.Exit(1) from e
     took = time.monotonic() - t0
     if s["status"] == "healthy":
         typer.echo(f"健康，0 个问题，用时 {took:.1f} 秒  {s['inv_id']}")

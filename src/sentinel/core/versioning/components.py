@@ -34,7 +34,8 @@ BEHAVIOR_PATHS = ("src", "config", "uv.lock", "pyproject.toml")
 
 
 def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
+    # 只去掉末尾的换行：porcelain 输出每行开头的空格是状态码的一部分，不能 strip
+    return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=True).stdout.rstrip("\n")
 
 
 def behavior_sha() -> str:
@@ -49,7 +50,7 @@ def behavior_sha() -> str:
 def behavior_dirty() -> list[str]:
     """上述路径里未提交的改动（包括未跟踪的新文件），返回文件列表；空列表表示干净。"""
     out = _git("status", "--porcelain", "--untracked-files=normal", "--", *BEHAVIOR_PATHS)
-    return [line[3:] for line in out.splitlines() if line.strip()]
+    return [line[3:] for line in out.splitlines() if line.strip()]  # 每行是 "XY 路径"
 
 
 def collect_components(packs: list[LoadedPack], code_sha: str | None = None) -> VersionComponents:
