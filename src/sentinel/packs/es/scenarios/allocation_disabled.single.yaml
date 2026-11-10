@@ -1,0 +1,18 @@
+# 分片分配被关闭，单一故障（S2 的 config_change）：关闭分配后重启 data-2，它的分片回不去。
+schema_version: 1
+id: es.allocation_disabled.single
+pack: es
+fault:
+  kind: script
+  ref: chaos/es/allocation_disabled.sh
+  params: { wait_nodes: 3 }            # 故障台：等 data-2 重新加入集群再录制，否则录到的是"节点不可用"的状态
+ground_truth:
+  root_cause_label: es.allocation_disabled
+  acceptable_actions: [es.enable_allocation]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_settings]  # allocation.enable=none 只在集群设置里能看到
+  key_facts: [cluster.unassigned_shards]
+  expect_escalation: false
+difficulty: single
+origin: bench
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }

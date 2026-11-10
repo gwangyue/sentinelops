@@ -1,0 +1,18 @@
+# 分片数达到上限，单一故障。已知局限：注入方式会在集群设置里留下线索（S2），M2 改为建大量小索引。
+schema_version: 1
+id: es.shard_limit.single
+pack: es
+fault:
+  kind: script
+  ref: chaos/es/shard_limit.sh
+  params: {}
+ground_truth:
+  root_cause_label: es.shard_limit_reached
+  acceptable_actions: [es.raise_shard_limit_temporarily]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_settings]
+  key_facts: [cluster.shard_usage_ratio]
+  expect_escalation: false
+difficulty: single
+origin: bench
+symptom_wait: { detector: es.shard_limit, timeout_s: 120 }

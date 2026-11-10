@@ -1,0 +1,18 @@
+# 节点不可用，单一故障。宕机和网络分区用同一个真实答案（06 §5.3、ADR-009）。
+schema_version: 1
+id: es.node_down.single
+pack: es
+fault:
+  kind: chaos
+  ref: chaos/es/pod_failure.yaml        # PodChaos pod-failure，打在 data-2
+  params: {}
+ground_truth:
+  root_cause_label: es.node_unavailable
+  acceptable_actions: []                # 恢复节点要靠人或 K8s，动作目录里没有合适的动作（M3 再看）
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_health]  # 节点数减少的直接证据
+  key_facts: [cluster.nodes, cluster.unassigned_shards]
+  expect_escalation: false
+difficulty: single
+origin: bench
+symptom_wait: { detector: es.node_count, timeout_s: 120 }
