@@ -1,0 +1,59 @@
+# 依赖方向（01 §2）。由 make check 里的 lint-imports 执行。
+[importlinter]
+root_package = sentinel
+
+[importlinter:contract:contracts-independent]
+name = contracts 不依赖任何其他 sentinel 模块
+type = forbidden
+source_modules = sentinel.contracts
+forbidden_modules =
+    sentinel.sdk
+    sentinel.packs
+    sentinel.core
+    sentinel.exec
+    sentinel.governance
+    sentinel.eval
+    sentinel.api
+    sentinel.cli
+    sentinel.mcp
+
+[importlinter:contract:sdk-only-contracts]
+name = sdk 只依赖 contracts
+type = forbidden
+source_modules = sentinel.sdk
+forbidden_modules =
+    sentinel.packs
+    sentinel.core
+    sentinel.exec
+    sentinel.governance
+    sentinel.eval
+    sentinel.api
+    sentinel.cli
+    sentinel.mcp
+
+[importlinter:contract:packs-only-contracts-sdk]
+name = packs 只依赖 contracts 和 sdk
+type = forbidden
+source_modules = sentinel.packs
+forbidden_modules =
+    sentinel.core
+    sentinel.exec
+    sentinel.governance
+    sentinel.eval
+    sentinel.api
+    sentinel.cli
+    sentinel.mcp
+
+[importlinter:contract:core-no-packs]
+name = core 不能 import 具体的专家包（通过注册表在运行时加载）
+type = forbidden
+source_modules = sentinel.core
+forbidden_modules = sentinel.packs
+
+[importlinter:contract:exec-no-core]
+name = exec 不依赖 core（执行器只信任 Postgres 里的审批记录）
+type = forbidden
+source_modules = sentinel.exec
+forbidden_modules = sentinel.core
+
+# TODO(edge): "eval 只调用 core 的公开接口"——core 的公开接口在 D3 确定后，再加一条 forbidden 规则禁止 import core 的内部子模块
