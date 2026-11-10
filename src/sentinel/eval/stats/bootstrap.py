@@ -72,6 +72,20 @@ def compare(
     )
 
 
+def interval(
+    scores: list[RunScore], *, metric: str = "top1_correct", n_boot: int = 2000, seed: int = 0
+) -> tuple[float, float, float]:
+    """单个版本的点估计和 95% 区间（收敛曲线用，06 §8）：和 compare 一样按场景重采样，剔除录制未覆盖的用例。"""
+    ex = per_example([s for s in scores if s.replay_misses == 0], metric)
+    by_scn: dict[str, list[float]] = defaultdict(list)
+    for e, v in ex.items():
+        by_scn[scenario_of(e)].append(v)
+    m_s = [statistics.fmean(v) for v in by_scn.values()]
+    rng = random.Random(seed)
+    boots = sorted(statistics.fmean(rng.choices(m_s, k=len(m_s))) for _ in range(n_boot))
+    return statistics.fmean(ex.values()), boots[int(0.025 * n_boot)], boots[int(0.975 * n_boot) - 1]
+
+
 @dataclass(frozen=True)
 class Stability:
     unstable_rate: float  # 多次运行 top1 不完全一致的用例比例

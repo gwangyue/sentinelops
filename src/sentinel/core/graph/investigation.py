@@ -172,6 +172,7 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
             changes=changes,
             knowledge=knowledge,
             memories=memories,
+            raw=_raw_facts(deps, state["inv_id"], sheets) if deps.policy.get("L1", {}).get("format") == "raw" else None,
         )
         deps.store.update_investigation(state["inv_id"], context_bundle=bundle.model_dump(mode="json"))
         return {"bundle": bundle.model_dump(mode="json")}
@@ -271,6 +272,16 @@ def _escalation_reason(escalate: bool, why: str | None, confidences: list[float]
     if confidences[0] < policy["escalation"]["min_confidence"]:
         return f"low_confidence: H1 置信度 {confidences[0]:.2f} 低于 {policy['escalation']['min_confidence']}"
     return None
+
+
+def _raw_facts(deps: Deps, inv_id: str, sheets: list[FactSheet]) -> dict[str, tuple[str, Any]]:
+    """E1（04 §5）：事实卡片引用的那些观测，取出原始输出，按出现顺序去重。"""
+    out: dict[str, tuple[str, Any]] = {}
+    for x in (f for s in sheets for f in s.facts):
+        if x.observation_id not in out:
+            obs, raw = deps.obs_store.get(inv_id, x.observation_id)
+            out[x.observation_id] = (obs.tool, raw)
+    return out
 
 
 def _changes(deps: Deps, pack: LoadedPack, target: str, backend: ToolBackend) -> list[dict[str, Any]]:

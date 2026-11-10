@@ -5,6 +5,7 @@
 """
 
 from collections.abc import Sequence
+from typing import cast
 
 from google import genai
 from google.genai import types
@@ -19,7 +20,10 @@ def embed(texts: Sequence[str]) -> list[list[float]]:
     # 客户端要先存进变量：写成 genai.Client().models... 时，临时对象可能在请求途中被回收，
     # 它关闭底层 HTTP 连接后请求报 "client has been closed"（M2 D6 实测）
     client = genai.Client()
+    # cast 成 SDK 的 ContentListUnion：list 是不变的，list[str] 不能直接当 list[str | Image | ...] 用
+    # （装了 pillow 之后 mypy 才看得到 Image，M2 D9 加 matplotlib 时暴露）
+    contents = cast(types.ContentListUnion, list(texts))
     r = client.models.embed_content(
-        model=spec.model, contents=list(texts), config=types.EmbedContentConfig(output_dimensionality=dims)
+        model=spec.model, contents=contents, config=types.EmbedContentConfig(output_dimensionality=dims)
     )
     return [list(e.values or []) for e in r.embeddings or []]

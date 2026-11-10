@@ -18,6 +18,7 @@ dependencies = [
     "langchain-google-genai>=4.4.2",
     "psycopg[binary,pool]>=3.3.6",
     "langsmith>=0.14.12",
+    "matplotlib>=3.11.2",
 ]
 
 [project.scripts]

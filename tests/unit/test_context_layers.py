@@ -196,3 +196,13 @@ def test_corpus_sections_and_hash() -> None:
     assert len({s.doc_id.split("#")[0] for s in secs}) == 5
     assert all(s.detectors and s.source.startswith("Elastic docs") for s in secs)
     assert len(knowledge_hash(PACK)) == 64
+
+
+def test_l1_raw_mode_for_e1() -> None:
+    # E1 的对照组（04 §5）：L1 放原始 JSON、按预算截断，不放事实卡片
+    policy = load_context_policy()
+    big = {"nodes": {f"n{i}": {"fs": {"total": {"available_in_bytes": i}}} for i in range(2000)}}
+    b = build_context("inv", [_finding()], [_sheet(0)], {}, policy, raw={"obs_9": ("es.nodes_stats", big)})
+    r = b.rendered
+    assert "## L1 原始数据" in r and "obs_9 es.nodes_stats: {" in r and "事实卡片" not in r
+    assert b.tokens_by_layer["L1"] <= policy["budgets"]["L1"] + 20  # 截断后不超出 L1 预算（留出前缀的余量）

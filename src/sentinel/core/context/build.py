@@ -43,6 +43,12 @@ def _fact_line(x: Fact) -> str:
     return f"{x.status:<8} {x.subject} {x.key}={x.value} baseline={x.baseline} ({x.observation_id})"
 
 
+def _truncate(text: str, tokens: int) -> str:
+    while estimate_tokens(text) > tokens and len(text) > 1:
+        text = text[: int(len(text) * 0.9)]
+    return text
+
+
 @dataclass
 class _Entry:
     layer: str  # L0 / L1 / L3 / L4 / L5
@@ -92,7 +98,9 @@ def build_context(
     changes: Sequence[Change] = (),
     knowledge: Sequence[KnowledgeHit] = (),
     memories: Sequence[MemoryHit] = (),
+    raw: Mapping[str, tuple[str, Any]] | None = None,
 ) -> ContextBundle:
+    """raw 不为空时是 E1 实验的对照组（04 §5）：L1 不放事实卡片，改放事实来源观测的原始 JSON（截断）。"""
     budgets = policy["budgets"]
     layers: dict[str, list[_Entry]] = {}
 
@@ -100,7 +108,17 @@ def build_context(
     layers["L0"] = [_Entry("L0", f.id, _finding_line(f), protected=True) for f in findings]
     # L1：异常项排在前面先占预算，并且不可删；其余是"和问题相关的关键项"，降级时最后才删
     facts = sorted((x for s in sheets for x in s.facts), key=lambda x: x.status != "abnormal")
-    layers["L1"] = [_Entry("L1", x.observation_id, _fact_line(x), protected=x.status == "abnormal") for x in facts]
+    if raw is None:
+        layers["L1"] = [_Entry("L1", x.observation_id, _fact_line(x), protected=x.status == "abnormal") for x in facts]
+    else:
+        # 每条观测平分 L1 预算，用和 _fit_layer 相同的 estimate_tokens 截断；原始数据没有"异常项"，都不保护
+        per = budgets["L1"] // max(1, len(raw))
+        layers["L1"] = [
+            _Entry(
+                "L1", oid, _truncate(f"{oid} {tool}: {json.dumps(r, ensure_ascii=False, sort_keys=True)}", per), False
+            )
+            for oid, (tool, r) in raw.items()
+        ]
     # L5：按相似度排好序；top-1 不可删（04 §3.7）
     layers["L5"] = [_Entry("L5", m.memory_id, render_memory(m), protected=i == 0) for i, m in enumerate(memories)]
     # L3：最新的变更在前，降级时从末尾（最早的）删
@@ -123,10 +141,13 @@ def build_context(
     sections = ["## L0 问题事件\n" + wrap("findings", "\n".join(kept("L0")))]
     omitted = sum(s.omitted_normal_count for s in sheets)
     env_line = " · ".join(f"{k}={v}" for k, v in sorted(env.items()) if v not in (None, [], {}))
-    sections.append(
+    l1_title = (
         f"## L1 事实卡片（省略正常项 {omitted} 条，表示这些指标都正常）\n"
-        + wrap("facts", "\n".join(kept("L1")))
-        + (f"\n环境（人工维护）：{env_line}" if env_line else "")
+        if raw is None
+        else "## L1 原始数据（工具的原始输出，按预算截断）\n"
+    )
+    sections.append(
+        l1_title + wrap("facts", "\n".join(kept("L1"))) + (f"\n环境（人工维护）：{env_line}" if env_line else "")
     )
     if kept("L5"):
         # 记忆的文本由系统模板生成（05 §3.1），不是被管系统的原文

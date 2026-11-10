@@ -404,6 +404,14 @@ def eval_compare(
         )
         if c.excluded_replay_miss:
             typer.echo(f"      录制未覆盖、已剔除：{', '.join(c.excluded_replay_miss)}")
+        if by == "occurrence" and ids is not None:
+            # 记忆的增益要看"第 2 次及以后"这一组的步数和费用（05 §5 M-E1 的预期），所以分组也给区间
+            for metric, fmt in (("steps", ".2f"), ("cost_usd", ".4f")):
+                m = compare(sa, sb, metric=metric)
+                typer.echo(
+                    f"      {metric:<9} {m.a_score:{fmt}} → {m.b_score:{fmt}}  "
+                    f"95% 区间 [{m.low:+{fmt}}, {m.high:+{fmt}}]  {m.verdict}"
+                )
     # 次要指标和成本（06 §3.3、§7.2）：同样按场景聚类给区间；只有成本参与上线取舍（§7.2 第 3、4 条）
     typer.echo("  次要指标（全部用例）：")
     for metric, fmt in (
@@ -462,6 +470,46 @@ def eval_clusters(
     typer.echo(f"建议下一步：{nxt} → {FIX_HINTS.get(nxt.removeprefix('judge:'), '看评审理由')}" if nxt else "没有失败")
 
 
+@eval_app.command("curve")
+def eval_curve(
+    pack: Annotated[str, typer.Option()] = "es",
+    out: Annotated[Path, typer.Option(help="输出的 PNG")] = Path("var/eval/curve.png"),
+) -> None:
+    """收敛曲线（06 §8）：每个版本 dev 上的 top1 和 95% 区间；无效改动画空心点；heldout 画菱形。"""
+    from sentinel.core.store import open_store
+    from sentinel.eval import results
+    from sentinel.eval.curve import points, render
+
+    # TODO(edge)：结果文件按领域分开存；现在只有 es，pack 参数只做校验
+    if pack != "es":
+        raise typer.BadParameter("目前只有 es 的评测结果")
+    notes = {v.seq: v.note for v in open_store().list_versions()}
+    pts = points(results.ROOT, notes)
+    render(pts, out)
+    for p in pts:
+        mark = "○" if p.ineffective else "●"
+        typer.echo(
+            f"  {mark} v{p.seq:<3} {p.split:<7} {p.tag}  top1 {p.top1:.2f} [{p.low:.2f}, {p.high:.2f}]  {p.note[:50]}"
+        )
+    typer.echo(f"已生成 {out}")
+
+
+ablation_app = typer.Typer(no_args_is_help=True, help="消融实验（05 §5）")
+eval_app.add_typer(ablation_app, name="ablation")
+
+
+@ablation_app.command("memory")
+def ablation_memory(
+    streams: Annotated[str, typer.Option(help="事故流的 split（只有 dev）")] = "dev",
+    control: Annotated[str, typer.Option(help="关闭记忆的版本")] = "v20",
+    treatment: Annotated[str, typer.Option(help="打开记忆的版本")] = "v23",
+    dataset_tag: Annotated[str, typer.Option(help="数据集版本标签")] = "ds-20261110-6",
+) -> None:
+    """M-E1（08 M2 验收）：读两个版本已有的事故流结果，不重跑；输出增益、伤害率和区间（按第几次遇到分组）。"""
+    eval_compare(control, treatment, split=streams, dataset_tag=dataset_tag, by="occurrence", stream=True)
+
+
+@knowledge_app.command("index")
 def knowledge_index(pack: Annotated[str, typer.Option()] = "es") -> None:
     """把专家包 knowledge/ 下的 runbook 切成段落、算向量，重建 es-memory 上的知识索引。"""
     from sentinel.core.knowledge.corpus import knowledge_hash, sections
