@@ -1,0 +1,29 @@
+pack: es
+seed: 0
+streams:
+  S1:
+  - es.allocation_disabled.single#r5
+  - es.replicas_unassignable.with_distractor#r5
+  - es.node_down.with_distractor#r5
+  - es.network_partition.with_distractor#r5
+  - es.shard_limit.single#r6
+  - es.allocation_disabled.with_distractor#r5
+  - es.disk_watermark.single#r5
+  - es.node_down.single#r5
+  - es.disk_watermark.with_distractor#r5
+  - es.allocation_disabled.compound#r5
+  - es.shard_limit.with_distractor#r7
+  - es.node_down.compound#r5
+  S2:
+  - es.node_down.single#r6
+  - es.shard_limit.with_distractor#r8
+  - es.allocation_disabled.compound#r6
+  - es.node_down.with_distractor#r6
+  - es.network_partition.with_distractor#r6
+  - es.node_down.compound#r6
+  - es.disk_watermark.single#r6
+  - es.shard_limit.single#r7
+  - es.disk_watermark.with_distractor#r6
+  - es.allocation_disabled.single#r6
+  - es.replicas_unassignable.with_distractor#r6
+  - es.allocation_disabled.with_distractor#r6
