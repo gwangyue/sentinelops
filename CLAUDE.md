@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：M1 D1–D4 完成，验收命令已跑通；下一步是 M1 收尾（08 §6.6：独立审阅、验收报告、代码导览、打开 golden-demo 第 1–3 步、打 tag）
-- 最新版本：v6（本地 compose 的 Postgres）· 最新数据集标签：ds-20261110-1（es，dev 8 条）
+- 里程碑：M1 完成（tag `m1`，报告 docs/reports/M1-report.md）；下一步是 M2，开始前先看报告 §9 的两个决定
+- 最新版本：v7（M1 发布版本，本地 compose 的 Postgres）· 最新数据集标签：ds-20261110-1（es，dev 8 条）
