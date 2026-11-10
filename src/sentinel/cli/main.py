@@ -347,6 +347,21 @@ def eval_compare(
         )
         if c.excluded_replay_miss:
             typer.echo(f"      录制未覆盖、已剔除：{', '.join(c.excluded_replay_miss)}")
+    # 次要指标和成本（06 §3.3、§7.2）：同样按场景聚类给区间；只有成本参与上线取舍（§7.2 第 3、4 条）
+    typer.echo("  次要指标（全部用例）：")
+    for metric, fmt in (
+        ("cost_usd", ".4f"),
+        ("steps", ".2f"),
+        ("tokens", ".0f"),
+        ("evidence_support_rate", ".3f"),
+        ("top3_correct", ".2f"),
+    ):
+        m = compare(ra, rb, metric=metric)
+        verdict = {"提升": "显著上升", "退步": "显著下降"}.get(m.verdict, "无显著变化")
+        typer.echo(
+            f"    {metric:<22} {a} {m.a_score:{fmt}}  {b} {m.b_score:{fmt}}  差值 {m.point:+{fmt}}  "
+            f"95% 区间 [{m.low:+{fmt}}, {m.high:+{fmt}}]  {verdict}"
+        )
 
 
 @knowledge_app.command("index")
