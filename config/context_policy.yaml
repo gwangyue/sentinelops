@@ -1,0 +1,11 @@
+# 上下文组装策略（04 §3.10）。整份内容进入 AgentVersion.components.context_policy，改任何一项都要重新冻结。
+# M1 只用到 L0、L1；L3/L4/L5 和压缩在 M2 打开。预算数字【待定，M2 用实验调】。
+version: 1
+budgets: { prefix: 3000, L0: 500, L1: 2000, L5: 1500, L3: 1000, L4: 1500, L2_max: 20000 }
+degrade_order: [L4, L3, L5, L1_related]
+facts: { include_related_objects: true, max_related_objects: 5 }
+untrusted: { wrap: true, escape_tags: true }
+# 诊断结果的升级规则（02 §1"置信度低 → 升级给人"）
+escalation: { min_confidence: 0.5 }
+# 每次调查的 token 上限（01 §3.4 预算）：超过就中止并升级
+investigation_token_budget: 200000
