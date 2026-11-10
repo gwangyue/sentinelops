@@ -32,7 +32,7 @@ def _harness(fixture: str, script=None):  # type: ignore[no-untyped-def]
     # 回放模式 + 假 LLM（golden-demo 规则 1）；和 tests/flows 用同一套组装
     import tempfile
 
-    from tests.flows.conftest import Harness
+    from tests.harness import Harness
 
     return Harness(Path(tempfile.mkdtemp()), fixture, script)
 
@@ -68,12 +68,26 @@ def step3_diagnosis() -> tuple[Status, str]:
     return Status.PASS, ""
 
 
+def step2_inject() -> tuple[Status, str]:
+    """检测器在超时内触发。注入本身要在线做（sentinel bench inject），这里检查最近一次录制留下的记录。"""
+    from sentinel.eval.dataset import read_fixture_index
+
+    rows = [r for r in read_fixture_index() if r["example_id"].startswith("es.disk_watermark.single#")]
+    if not rows:
+        return Status.FAIL, "fixtures/index.jsonl 里没有 es.disk_watermark.single 的录制"
+    last = rows[-1]
+    if last["symptom_after_s"] > last["timeout_s"]:
+        return Status.FAIL, f"症状在 {last['symptom_after_s']} 秒后才出现，超过 {last['timeout_s']} 秒"
+    return Status.PASS, f"（{last['example_id']}：{last['symptom_after_s']} 秒）"
+
+
 SCENARIO = Path(__file__).resolve().parents[1] / "src/sentinel/packs/es/scenarios/disk_watermark.single.yaml"
 
 # 步骤编号 → 检查函数。实现某一步的那天，在这里换成真正的检查。
 CHECKS: dict[int, Callable[[], tuple[Status, str]]] = {n: _not_implemented for n in range(1, 11)}
 CHECKS[1] = step1_patrol_healthy
-CHECKS[3] = step3_diagnosis  # 第 2 步（bench inject）在 D4
+CHECKS[2] = step2_inject
+CHECKS[3] = step3_diagnosis
 
 
 def run(force_all: bool) -> int:

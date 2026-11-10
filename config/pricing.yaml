@@ -1,0 +1,16 @@
+# 模型单价（美元 / 每 100 万 token），只用于评测的成本统计（06 §3.1 cost_usd），不影响 Agent 行为。
+# 来源：Google 官方价格页 https://aistudio.google.com/docs/pricing（2026-11-10 查询，Standard / 付费档）
+# 输出价包含思考 token。2027-01-01 起 3.x Flash 涨价到 $1.50 / $7.50，届时要更新这里。
+models:
+  gemini-3.7-flash:
+    input: 0.75
+    output: 3.75
+    basis: estimated      # 官方价格页没有列出 3.7-flash（只有 3.6-flash 和 3.8-flash，两者同价），按相邻版本估算
+  gemini-3.1-pro-preview:
+    input: 2.00           # 提示词 ≤ 200k token；超过时是 4.00 / 18.00，评审调用不会超过
+    output: 12.00
+    basis: official
+  gemini-embedding-001:
+    input: 0.15
+    output: 0.0
+    basis: official

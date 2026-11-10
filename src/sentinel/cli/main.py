@@ -20,6 +20,12 @@ version_app = typer.Typer(no_args_is_help=True, help="Agent 版本（03 §5.2）
 inv_app = typer.Typer(no_args_is_help=True, help="调查")
 app.add_typer(version_app, name="version")
 app.add_typer(inv_app, name="investigations")
+bench_app = typer.Typer(no_args_is_help=True, help="故障台（02 §6）")
+dataset_app = typer.Typer(no_args_is_help=True, help="数据集（06 §5）")
+eval_app = typer.Typer(no_args_is_help=True, help="评测（06 篇）")
+app.add_typer(bench_app, name="bench")
+app.add_typer(dataset_app, name="dataset")
+app.add_typer(eval_app, name="eval")
 
 # 观测记录的原始输出放在仓库根目录的 var/ 下（已加入 .gitignore）
 OBS_ROOT = Path("var/observations")
@@ -198,3 +204,112 @@ def inv_show(inv_id: str) -> None:
     typer.echo(f"证据支持率 {rate:.0%}   工具调用 {d.steps} 次   token 输入 {d.tokens_in} / 输出 {d.tokens_out}")
     if r.escalate_reason:
         typer.echo(f"已升级给人：{r.escalate_reason}")
+
+
+@bench_app.command("inject")
+def bench_inject(scenario: str, pack: Annotated[str, typer.Option()] = "es") -> None:
+    """注入故障并等症状出现，然后撤销（golden-demo 第 2 步）。"""
+    from sentinel.eval.bench.bench import inject
+
+    typer.echo(f"故障已注入，等待症状出现：{scenario}")
+    took = inject(pack, scenario)
+    typer.echo(f"症状在 {took} 秒后出现；故障已撤销，集群恢复 green")
+
+
+@bench_app.command("record")
+def bench_record(
+    scenario: str, n: Annotated[int, typer.Option(help="录几条")] = 2, pack: Annotated[str, typer.Option()] = "es"
+) -> None:
+    """注入 → 等症状 → 录制全部只读工具输出 → 撤销 → 写入 datasets/<pack>.jsonl。"""
+    from sentinel.eval.bench.bench import record
+
+    ids = record(pack, scenario, n, log=typer.echo)
+    typer.echo(f"完成：{len(ids)} 条录制")
+
+
+@dataset_app.command("sync")
+def dataset_sync(
+    pack: Annotated[str, typer.Option()] = "es",
+    note: Annotated[str, typer.Option(help="这次数据集变化做了什么（必填）")] = "",
+) -> None:
+    """把 datasets/<pack>.jsonl 同步到 LangSmith 并打版本标签（06 §5.2）。"""
+    from langsmith import Client
+
+    from sentinel.eval.dataset import sync
+
+    tag, counts = sync(pack, note, Client())
+    typer.echo(f"已同步 sentinel-{pack}：标签 {tag}  dev {counts['dev']} / heldout {counts['heldout']}")
+
+
+def _latest_tag() -> str | None:
+    from sentinel.eval.dataset import DATASETS
+
+    p = DATASETS / "CHANGELOG.md"
+    tags = [ln.split("|")[1].strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.startswith("| ds-")]
+    return tags[-1] if tags else None
+
+
+@eval_app.command("run")
+def eval_run(
+    pack: Annotated[str, typer.Option()] = "es",
+    split: Annotated[str, typer.Option()] = "dev",
+    dataset_tag: Annotated[str | None, typer.Option(help="数据集版本标签（必填，不能是 latest）")] = None,
+    reps: Annotated[int, typer.Option(help="每个用例重复几次")] = 3,
+    version: Annotated[str | None, typer.Option(help="只能等于当前版本；不填就是当前版本")] = None,
+) -> None:
+    """在回放模式下评测当前版本（06 §9）。"""
+    from sentinel.eval.runner import run
+    from sentinel.eval.stats.bootstrap import stability
+
+    s = run(pack, split, dataset_tag, reps, version)
+    ok = [x for x in s.scores if x.replay_misses == 0]
+    st = stability(s.scores)
+    typer.echo(f"实验 {s.experiment}：{len(s.scores)} 次运行，结果 {s.result_file}")
+    if ok:
+        typer.echo(
+            f"  top1 {sum(x.top1_correct for x in ok) / len(ok):.2f}（剔除录制未覆盖的 "
+            f"{len(s.scores) - len(ok)} 次）  证据支持率 {sum(x.evidence_support_rate for x in ok) / len(ok):.2f}"
+            f"  费用 ${sum(x.cost_usd for x in s.scores):.4f}"
+        )
+    typer.echo(f"  不稳定用例率 {st.unstable_rate:.2f}  用例内方差均值 {st.mean_within_var:.3f}")
+
+
+@eval_app.command("baseline")
+def eval_baseline(
+    pack: Annotated[str, typer.Option()] = "es",
+    split: Annotated[str, typer.Option()] = "dev",
+    dataset_tag: Annotated[str | None, typer.Option(help="数据集版本标签（必填）")] = None,
+) -> None:
+    """多数类和纯规则两个笨基线（06 §4.5），不调用 LLM。"""
+    from sentinel.eval import results
+    from sentinel.eval.baselines import run
+
+    for name, path in run(pack, split, dataset_tag).items():
+        sc = results.load(path)
+        typer.echo(f"baseline:{name}  top1 {sum(x.top1_correct for x in sc) / len(sc):.2f}  ({len(sc)} 个用例)  {path}")
+
+
+@eval_app.command("compare")
+def eval_compare(
+    a: str,
+    b: str,
+    split: Annotated[str, typer.Option()] = "dev",
+    dataset_tag: Annotated[str | None, typer.Option(help="不填就用 CHANGELOG 里最新的标签")] = None,
+) -> None:
+    """配对比较 B − A 的 top1：点估计、按场景聚类的 bootstrap 95% 区间、判断（06 §4.2）。"""
+    from sentinel.eval import results
+    from sentinel.eval.guards import require_dataset_tag
+    from sentinel.eval.stats.bootstrap import compare
+
+    tag = require_dataset_tag(dataset_tag or _latest_tag())
+
+    def load(name: str) -> list:  # type: ignore[type-arg]
+        return results.load(results.result_file(name.replace("baseline:", "baseline-"), tag, split))
+
+    c = compare(load(a), load(b))
+    typer.echo(f"{b} − {a}（{tag} / {split}，主指标 top1）")
+    typer.echo(f"  {a} {c.a_score:.2f}   {b} {c.b_score:.2f}")
+    typer.echo(f"  差值 {c.point:+.2f}   95% 区间 [{c.low:+.2f}, {c.high:+.2f}]   判断：{c.verdict}")
+    typer.echo(f"  场景 {c.n_scenarios} 个，用例 {c.n_examples} 个（区间按场景重采样，06 §4.2）")
+    if c.excluded_replay_miss:
+        typer.echo(f"  录制未覆盖、已剔除：{', '.join(c.excluded_replay_miss)}")
