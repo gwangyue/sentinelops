@@ -155,3 +155,16 @@ def test_harm_when_top1_copies_wrong_memory(tmp_path: Path) -> None:
 def test_control_without_memory_has_no_l5() -> None:
     scores, rows = run_stream_set(STREAM, EXAMPLES, 1, deps(set(), memory=False), log=lambda _: None)
     assert all(s.memory_hit is None for s in scores) and all(r.l5 == [] for r in rows)
+
+
+def test_parallel_jobs_have_own_stores_and_fixed_order() -> None:
+    # 6 个（重复, 流）任务并行：每个任务一个独立的记忆索引；合并后的顺序和串行时一样
+    TrackedStore.made.clear()
+    two = {"S1": STREAM["S1"], "S2": list(reversed(STREAM["S1"]))}
+    scores, rows = run_stream_set(two, EXAMPLES, 3, deps(set()), log=lambda _: None)
+    assert len(TrackedStore.made) == 6 and all(st.dropped and st.seen == 2 for st in TrackedStore.made)
+    assert [(r.rep, r.stream, r.example_id) for r in rows] == [
+        (rep, name, eid) for rep in range(3) for name, ids in two.items() for eid in ids
+    ]
+    serial, _ = run_stream_set(two, EXAMPLES, 3, deps(set()), log=lambda _: None, workers=1)
+    assert [s.memory_hit for s in scores] == [s.memory_hit for s in serial]

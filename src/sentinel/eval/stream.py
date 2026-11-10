@@ -13,6 +13,7 @@ import json
 import random
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -118,27 +119,36 @@ def run_stream_set(
     reps: int,
     deps: StreamDeps,
     log: Callable[[str], None] = print,
+    workers: int | None = None,
 ) -> tuple[list[RunScore], list[MemoryRow]]:
+    """一条流内部必须按顺序（后面的用例要用前面写的记忆）；流与流、重复与重复之间没有共享状态，并行跑。
+    每个（重复, 流）任务有自己的记忆索引；结果按任务的固定顺序合并，和并行完成的先后无关。"""
     labels = {eid: examples[eid].outputs.root_cause_label for ids in streams.values() for eid in ids}
     occ = occurrences(streams, labels)
-    scores: list[RunScore] = []
-    rows: list[MemoryRow] = []
-    for rep in range(reps):
-        for name, ids in streams.items():
-            store = deps.make_store() if deps.make_store else None  # 每条流、每次重复都从空的记忆开始（05 §4.2）
-            try:
-                for eid in ids:
-                    s, row = _one(examples[eid], rep, name, occ[eid], store, deps)
-                    scores.append(s)
-                    rows.append(row)
-                    log(
-                        f"rep{rep} {name} {eid} 第 {occ[eid]} 次  top1={s.top1_correct} 步数={s.steps} "
-                        f"L5={row.l5}{'  伤害' if row.harm else ''}"
-                    )
-            finally:
-                if store is not None:
-                    store.drop()
-    return scores, rows
+    jobs = [(rep, name, ids) for rep in range(reps) for name, ids in streams.items()]
+
+    def one_stream(rep: int, name: str, ids: list[str]) -> tuple[list[RunScore], list[MemoryRow]]:
+        scores: list[RunScore] = []
+        rows: list[MemoryRow] = []
+        store = deps.make_store() if deps.make_store else None  # 每条流、每次重复都从空的记忆开始（05 §4.2）
+        try:
+            for eid in ids:
+                s, row = _one(examples[eid], rep, name, occ[eid], store, deps)
+                scores.append(s)
+                rows.append(row)
+                log(
+                    f"rep{rep} {name} {eid} 第 {occ[eid]} 次  top1={s.top1_correct} 步数={s.steps} "
+                    f"L5={row.l5}{'  伤害' if row.harm else ''}"
+                )
+        finally:
+            if store is not None:
+                store.drop()
+        return scores, rows
+
+    # TODO(edge)：某个任务失败时，其余任务照样跑完，最后才抛出第一个异常；部分结果不保存
+    with ThreadPoolExecutor(max_workers=workers or len(jobs)) as pool:
+        done = list(pool.map(lambda j: one_stream(*j), jobs))
+    return [s for sc, _ in done for s in sc], [r for _, rw in done for r in rw]
 
 
 def run_streams(
@@ -147,6 +157,7 @@ def run_streams(
     reps: int,
     version_arg: str | None,
     log: Callable[[str], None] = print,
+    workers: int | None = None,
 ) -> tuple[Path, Path]:
     tag = require_dataset_tag(dataset_tag)
     check_no_cache()
@@ -186,7 +197,7 @@ def run_streams(
         policy=load_memory_policy(),
         descriptions={r.label: r.description for r in load_pack(pack).manifest.root_causes},
     )
-    scores, rows = run_stream_set(load_streams(pack), examples, reps, deps, log)
+    scores, rows = run_stream_set(load_streams(pack), examples, reps, deps, log, workers)
     path = results.result_file(f"v{version.seq}__stream", tag, "dev")
     results.save(path, scores)
     side = path.with_suffix(".memory.jsonl")

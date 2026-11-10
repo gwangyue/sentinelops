@@ -280,6 +280,7 @@ def eval_stream(
     dataset_tag: Annotated[str | None, typer.Option(help="数据集版本标签（必填）")] = None,
     reps: Annotated[int, typer.Option(help="每条流重复几次")] = 3,
     version: Annotated[str | None, typer.Option(help="只能等于当前版本")] = None,
+    workers: Annotated[int | None, typer.Option(help="并行的（重复, 流）任务数；默认全部并行")] = None,
 ) -> None:
     """按事故流顺序、带状态地评测（05 §4.2；M-E1）。不走 evaluate()，trace 照样上传（06 §9）。"""
     from sentinel.core.versioning.freeze import FreezeError
@@ -288,7 +289,7 @@ def eval_stream(
     from sentinel.eval.stream import run_streams
 
     try:
-        path, side = run_streams(pack, dataset_tag, reps, version)
+        path, side = run_streams(pack, dataset_tag, reps, version, workers=workers)
     except (EvalGuardError, EvalError, FreezeError) as e:
         typer.echo(f"拒绝评测：{e}", err=True)
         raise typer.Exit(1) from e
