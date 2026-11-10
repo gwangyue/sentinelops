@@ -56,4 +56,22 @@ type = forbidden
 source_modules = sentinel.exec
 forbidden_modules = sentinel.core
 
-# TODO(edge): "eval 只调用 core 的公开接口"——core 的公开接口在 D3 确定后，再加一条 forbidden 规则禁止 import core 的内部子模块
+[importlinter:contract:eval-public-core]
+name = eval 只调用 core 的公开接口 sentinel.core.api（01 §2；M1 独立审阅发现 3）
+type = forbidden
+source_modules = sentinel.eval
+forbidden_modules =
+    sentinel.core.context
+    sentinel.core.credentials
+    sentinel.core.detect
+    sentinel.core.diagnosis
+    sentinel.core.graph
+    sentinel.core.llm
+    sentinel.core.memory
+    sentinel.core.observations
+    sentinel.core.packs_registry
+    sentinel.core.store
+    sentinel.core.toolbackend
+    sentinel.core.versioning
+# 经过 sentinel.core.api 的间接引用是允许的：这正是"公开接口"的意思
+allow_indirect_imports = True

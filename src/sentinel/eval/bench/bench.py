@@ -19,11 +19,17 @@ from typing import Any
 from ulid import ULID
 
 from sentinel.contracts import EvalExample, ExampleInputs, ExampleMetadata, ExampleOutputs, FaultRef, ScenarioSpec
-from sentinel.core.credentials import resolve
-from sentinel.core.detect import load_env, run_detect
-from sentinel.core.observations.store import ObservationStore
-from sentinel.core.packs_registry import LoadedPack, load_pack
-from sentinel.core.toolbackend import Mode, ToolBackend, open_backend
+from sentinel.core.api import (
+    LoadedPack,
+    Mode,
+    ObservationStore,
+    ToolBackend,
+    load_env,
+    load_pack,
+    open_backend,
+    resolve_credential,
+    run_detect,
+)
 from sentinel.eval.dataset import (
     REPO,
     append_example,
@@ -125,7 +131,7 @@ def sweep(pack: LoadedPack, tb: ToolBackend) -> None:
 
 
 def _target_version() -> str:
-    c = resolve("es-readonly")
+    c = resolve_credential("es-readonly")
     http = ReadOnlyHttp(c.url, c.user, c.password)
     try:
         return str(http.get("/")["version"]["number"])
@@ -133,23 +139,28 @@ def _target_version() -> str:
         http.close()
 
 
-def inject(pack_name: str, scenario_id: str, *, revert: bool = True) -> float:
-    """golden-demo 第 2 步：注入并等症状出现。返回秒数；默认等到之后就撤销。"""
+def inject(pack_name: str, scenario_id: str, *, revert: bool = False) -> float:
+    """golden-demo 第 2 步：注入并等症状出现，返回秒数。默认**不撤销**：第 3 步要在故障还在的时候诊断。
+    撤销用 revert()。症状没出现时总是撤销，不把集群留在半坏的状态。"""
     pack = load_pack(pack_name)
     spec = load_scenarios(pack_name)[scenario_id]
     wait_green(pack)
     t0 = time.monotonic()  # 从开始注入算起（和 S2 的口径一致）：注入脚本本身的耗时也算在内
     run_fault(spec.fault, "inject")
     injected = time.monotonic() - t0
-    try:
-        fired = wait_symptom(pack, spec)
-    finally:
-        if revert:
-            run_fault(spec.fault, "revert")
-            wait_green(pack)
+    fired = wait_symptom(pack, spec)
+    if fired is None or revert:
+        revert_fault(pack_name, scenario_id)
     if fired is None:
-        raise BenchError(f"{spec.symptom_wait.timeout_s} 秒内检测器 {spec.symptom_wait.detector} 没有触发")
+        raise BenchError(f"{spec.symptom_wait.timeout_s} 秒内检测器 {spec.symptom_wait.detector} 没有触发，已撤销")
     return round(injected + fired, 1)
+
+
+def revert_fault(pack_name: str, scenario_id: str) -> None:
+    """撤销场景的故障，等集群恢复 green。"""
+    pack = load_pack(pack_name)
+    run_fault(load_scenarios(pack_name)[scenario_id].fault, "revert")
+    wait_green(pack)
 
 
 def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] = print) -> list[str]:

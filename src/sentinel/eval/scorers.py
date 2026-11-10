@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from sentinel.contracts import ContextBundle, Diagnosis, ExampleOutputs, Observation, RunScore
-from sentinel.core.diagnosis.evidence import check_evidence, support_rate
+from sentinel.core.api import check_evidence, support_rate
 
 PRICING = Path(__file__).resolve().parents[3] / "config" / "pricing.yaml"
 

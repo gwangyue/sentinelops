@@ -14,10 +14,7 @@ import yaml
 from langsmith import Client
 
 from sentinel.contracts import EvalExample, ExampleMetadata, RunScore
-from sentinel.core.detect import load_env, run_detect
-from sentinel.core.observations.store import ObservationStore
-from sentinel.core.packs_registry import load_pack
-from sentinel.core.toolbackend import Mode, ToolBackend
+from sentinel.core.api import Mode, ObservationStore, ToolBackend, load_env, load_pack, run_detect
 from sentinel.eval import results
 from sentinel.eval.dataset import DATASETS, REPO
 from sentinel.eval.guards import require_dataset_tag

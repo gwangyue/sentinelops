@@ -208,12 +208,21 @@ def inv_show(inv_id: str) -> None:
 
 @bench_app.command("inject")
 def bench_inject(scenario: str, pack: Annotated[str, typer.Option()] = "es") -> None:
-    """注入故障并等症状出现，然后撤销（golden-demo 第 2 步）。"""
+    """注入故障并等症状出现（golden-demo 第 2 步）。故障保留，演示完用 sentinel bench revert 撤销。"""
     from sentinel.eval.bench.bench import inject
 
     typer.echo(f"故障已注入，等待症状出现：{scenario}")
     took = inject(pack, scenario)
-    typer.echo(f"症状在 {took} 秒后出现；故障已撤销，集群恢复 green")
+    typer.echo(f"症状在 {took} 秒后出现。故障仍在，接下来可以 sentinel patrol；结束后 sentinel bench revert {scenario}")
+
+
+@bench_app.command("revert")
+def bench_revert(scenario: str, pack: Annotated[str, typer.Option()] = "es") -> None:
+    """撤销场景的故障，等集群恢复 green。"""
+    from sentinel.eval.bench.bench import revert_fault
+
+    revert_fault(pack, scenario)
+    typer.echo(f"已撤销 {scenario}，集群恢复 green")
 
 
 @bench_app.command("record")
@@ -241,14 +250,6 @@ def dataset_sync(
     typer.echo(f"已同步 sentinel-{pack}：标签 {tag}  dev {counts['dev']} / heldout {counts['heldout']}")
 
 
-def _latest_tag() -> str | None:
-    from sentinel.eval.dataset import DATASETS
-
-    p = DATASETS / "CHANGELOG.md"
-    tags = [ln.split("|")[1].strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.startswith("| ds-")]
-    return tags[-1] if tags else None
-
-
 @eval_app.command("run")
 def eval_run(
     pack: Annotated[str, typer.Option()] = "es",
@@ -258,10 +259,16 @@ def eval_run(
     version: Annotated[str | None, typer.Option(help="只能等于当前版本；不填就是当前版本")] = None,
 ) -> None:
     """在回放模式下评测当前版本（06 §9）。"""
-    from sentinel.eval.runner import run
+    from sentinel.core.versioning.freeze import FreezeError
+    from sentinel.eval.guards import EvalGuardError
+    from sentinel.eval.runner import EvalError, run
     from sentinel.eval.stats.bootstrap import stability
 
-    s = run(pack, split, dataset_tag, reps, version)
+    try:
+        s = run(pack, split, dataset_tag, reps, version)
+    except (EvalGuardError, EvalError, FreezeError) as e:
+        typer.echo(f"拒绝评测：{e}", err=True)
+        raise typer.Exit(1) from e
     ok = [x for x in s.scores if x.replay_misses == 0]
     st = stability(s.scores)
     typer.echo(f"实验 {s.experiment}：{len(s.scores)} 次运行，结果 {s.result_file}")
@@ -283,8 +290,14 @@ def eval_baseline(
     """多数类和纯规则两个笨基线（06 §4.5），不调用 LLM。"""
     from sentinel.eval import results
     from sentinel.eval.baselines import run
+    from sentinel.eval.guards import EvalGuardError
 
-    for name, path in run(pack, split, dataset_tag).items():
+    try:
+        paths = run(pack, split, dataset_tag)
+    except EvalGuardError as e:
+        typer.echo(f"拒绝评测：{e}", err=True)
+        raise typer.Exit(1) from e
+    for name, path in paths.items():
         sc = results.load(path)
         typer.echo(f"baseline:{name}  top1 {sum(x.top1_correct for x in sc) / len(sc):.2f}  ({len(sc)} 个用例)  {path}")
 
@@ -294,14 +307,16 @@ def eval_compare(
     a: str,
     b: str,
     split: Annotated[str, typer.Option()] = "dev",
-    dataset_tag: Annotated[str | None, typer.Option(help="不填就用 CHANGELOG 里最新的标签")] = None,
+    dataset_tag: Annotated[
+        str | None, typer.Option(help="数据集版本标签（必填）：两边的结果必须来自同一个标签")
+    ] = None,
 ) -> None:
     """配对比较 B − A 的 top1：点估计、按场景聚类的 bootstrap 95% 区间、判断（06 §4.2）。"""
     from sentinel.eval import results
     from sentinel.eval.guards import require_dataset_tag
     from sentinel.eval.stats.bootstrap import compare
 
-    tag = require_dataset_tag(dataset_tag or _latest_tag())
+    tag = require_dataset_tag(dataset_tag)
 
     def load(name: str) -> list:  # type: ignore[type-arg]
         return results.load(results.result_file(name.replace("baseline:", "baseline-"), tag, split))

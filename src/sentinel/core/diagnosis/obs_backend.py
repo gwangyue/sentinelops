@@ -6,6 +6,7 @@ from typing import Any
 from deepagents.backends.protocol import BackendProtocol, GlobResult, GrepResult, LsResult, ReadResult
 from deepagents.backends.utils import normalize_read_bounds
 
+from sentinel.core.context.build import escape_untrusted
 from sentinel.core.observations.store import ObservationStore
 
 
@@ -27,7 +28,8 @@ class ObsBackend(BackendProtocol):
         lines = text.splitlines(keepends=True)
         window = lines[offset : offset + limit]
         # 原始输出同样来自被管系统，属于不可信内容（04 §3.8）
-        content = f'<untrusted source="{obs.id}">\n' + "".join(window) + "\n</untrusted>\n"
+        # 转义：原始输出里如果有伪造的 </untrusted>，不能让它提前闭合区块（04 §3.8；M1 独立审阅发现 2）
+        content = f'<untrusted source="{obs.id}">\n' + escape_untrusted("".join(window)) + "\n</untrusted>\n"
         return ReadResult(
             file_data={"content": content, "encoding": "utf-8"},
             total_lines=len(lines),
