@@ -62,6 +62,25 @@ def run_fault(fault: FaultRef, action: str) -> None:
         subprocess.run([str(path), action], check=True, env=env, capture_output=True)
 
 
+def inject_all(spec: ScenarioSpec) -> None:
+    """先注入干扰项，再注入主故障：主故障出现时，干扰项已经在集群里了（03 §6.1）。"""
+    for d in spec.distractors:
+        run_fault(d, "inject")
+    run_fault(spec.fault, "inject")
+
+
+def revert_all(spec: ScenarioSpec) -> None:
+    """按相反的顺序撤销。某一步失败也继续撤销其余的，不把集群留在半坏的状态。"""
+    errors = []
+    for f in [spec.fault, *reversed(spec.distractors)]:
+        try:
+            run_fault(f, "revert")
+        except subprocess.CalledProcessError as e:
+            errors.append(f"{f.ref}: {e}")
+    if errors:
+        raise BenchError("撤销失败：" + "; ".join(errors))
+
+
 def _live(pack: LoadedPack) -> ToolBackend:
     return open_backend(pack, f"inv_bench_{ULID()}", Mode.LIVE, ObservationStore(SCRATCH))
 
@@ -146,7 +165,7 @@ def inject(pack_name: str, scenario_id: str, *, revert: bool = False) -> float:
     spec = load_scenarios(pack_name)[scenario_id]
     wait_green(pack)
     t0 = time.monotonic()  # 从开始注入算起（和 S2 的口径一致）：注入脚本本身的耗时也算在内
-    run_fault(spec.fault, "inject")
+    inject_all(spec)
     injected = time.monotonic() - t0
     fired = wait_symptom(pack, spec)
     if fired is None or revert:
@@ -159,7 +178,7 @@ def inject(pack_name: str, scenario_id: str, *, revert: bool = False) -> float:
 def revert_fault(pack_name: str, scenario_id: str) -> None:
     """撤销场景的故障，等集群恢复 green。"""
     pack = load_pack(pack_name)
-    run_fault(load_scenarios(pack_name)[scenario_id].fault, "revert")
+    revert_all(load_scenarios(pack_name)[scenario_id])
     wait_green(pack)
 
 
@@ -175,7 +194,7 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
         fixture.unlink(missing_ok=True)
         wait_green(pack)
         t0 = time.monotonic()
-        run_fault(spec.fault, "inject")
+        inject_all(spec)
         try:
             took = wait_symptom(pack, spec)
             if took is None:
@@ -188,7 +207,7 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
             finally:
                 tb.close()
         finally:
-            run_fault(spec.fault, "revert")
+            revert_all(spec)
         wait_green(pack)
         ex = EvalExample(
             id=f"{scenario_id}#r{k}",

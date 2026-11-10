@@ -1,0 +1,18 @@
+# 组合故障：分配被关闭 + 重启 data-2，同时 data-1 的磁盘在 92%。
+# 磁盘告警是红鲱鱼：分片未分配的原因是分配被关（allocation_explain 里每个节点都被 enable 决策器拒绝）。
+# 纯规则会因为磁盘检测器触发而答成 disk_high_watermark。
+schema_version: 1
+id: es.allocation_disabled.compound
+pack: es
+fault: { kind: script, ref: chaos/es/allocation_disabled.sh, params: { wait_nodes: 3 } }
+distractors:
+  - { kind: script, ref: chaos/es/distractor_disk_fill.sh, params: {} }
+ground_truth:
+  root_cause_label: es.allocation_disabled
+  acceptable_actions: [es.enable_allocation]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_settings, es.allocation_explain]
+  key_facts: [cluster.unassigned_shards, node.disk_used_pct]
+difficulty: compound
+origin: bench
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 150 }

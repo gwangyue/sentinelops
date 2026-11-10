@@ -1,0 +1,14 @@
+# 副本数超过可分配的节点数，单一故障。纯规则基线只看到"有未分配分片"，会答成 allocation_disabled（M2 场景表）。
+schema_version: 1
+id: es.replicas_unassignable.single
+pack: es
+fault: { kind: script, ref: chaos/es/distractor_overreplicated.sh, params: {} }
+ground_truth:
+  root_cause_label: es.replicas_unassignable
+  acceptable_actions: [es.set_replicas]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.allocation_explain]   # same_shard 拒绝原因只有它能说明
+  key_facts: [cluster.unassigned_shards]
+difficulty: single
+origin: bench
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }

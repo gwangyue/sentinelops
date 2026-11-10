@@ -1,0 +1,16 @@
+# 分配被关闭 + 干扰项 X2：集群设置里有两处和"分配"有关的改动，只有 allocation.enable=none 是根因。
+schema_version: 1
+id: es.allocation_disabled.with_distractor
+pack: es
+fault: { kind: script, ref: chaos/es/allocation_disabled.sh, params: { wait_nodes: 3 } }
+distractors:
+  - { kind: script, ref: chaos/es/distractor_rebalance_setting.sh, params: {} }
+ground_truth:
+  root_cause_label: es.allocation_disabled
+  acceptable_actions: [es.enable_allocation]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_settings]
+  key_facts: [cluster.unassigned_shards]
+difficulty: distractor
+origin: bench
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }

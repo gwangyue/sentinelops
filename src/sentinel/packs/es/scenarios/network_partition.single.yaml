@@ -1,0 +1,14 @@
+# 网络分区，单一故障：data-2 和另外两个节点双向隔离。真实答案和节点宕机相同（06 §5.3、ADR-009）。
+schema_version: 1
+id: es.network_partition.single
+pack: es
+fault: { kind: chaos, ref: chaos/es/partition.yaml, params: {} }
+ground_truth:
+  root_cause_label: es.node_unavailable
+  acceptable_actions: []
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_health]
+  key_facts: [cluster.nodes, cluster.unassigned_shards]
+difficulty: single
+origin: bench
+symptom_wait: { detector: es.node_count, timeout_s: 120 }

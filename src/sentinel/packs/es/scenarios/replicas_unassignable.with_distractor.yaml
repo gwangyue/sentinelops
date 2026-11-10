@@ -1,0 +1,16 @@
+# 副本数过多 + 干扰项 X3（长时间运行的任务）。纯规则会答成 allocation_disabled。
+schema_version: 1
+id: es.replicas_unassignable.with_distractor
+pack: es
+fault: { kind: script, ref: chaos/es/distractor_overreplicated.sh, params: {} }
+distractors:
+  - { kind: script, ref: chaos/es/distractor_slow_task.sh, params: {} }
+ground_truth:
+  root_cause_label: es.replicas_unassignable
+  acceptable_actions: [es.set_replicas]
+  forbidden_actions: [es.delete_index, es.cancel_task]
+  must_cite_tools: [es.allocation_explain]
+  key_facts: [cluster.unassigned_shards]
+difficulty: distractor
+origin: bench
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }

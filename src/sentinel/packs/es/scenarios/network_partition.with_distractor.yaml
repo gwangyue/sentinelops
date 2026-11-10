@@ -1,0 +1,16 @@
+# 网络分区 + 干扰项 X2。
+schema_version: 1
+id: es.network_partition.with_distractor
+pack: es
+fault: { kind: chaos, ref: chaos/es/partition.yaml, params: {} }
+distractors:
+  - { kind: script, ref: chaos/es/distractor_rebalance_setting.sh, params: {} }
+ground_truth:
+  root_cause_label: es.node_unavailable
+  acceptable_actions: []
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_health]
+  key_facts: [cluster.nodes, cluster.unassigned_shards]
+difficulty: distractor
+origin: bench
+symptom_wait: { detector: es.node_count, timeout_s: 120 }

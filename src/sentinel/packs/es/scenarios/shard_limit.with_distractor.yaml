@@ -1,0 +1,16 @@
+# 分片数达到上限 + 干扰项 X1（一个副本数过多的无关索引，带来未分配分片）。
+schema_version: 1
+id: es.shard_limit.with_distractor
+pack: es
+fault: { kind: script, ref: chaos/es/shard_limit.sh, params: {} }
+distractors:
+  - { kind: script, ref: chaos/es/distractor_overreplicated.sh, params: {} }
+ground_truth:
+  root_cause_label: es.shard_limit_reached
+  acceptable_actions: [es.raise_shard_limit_temporarily]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.cluster_settings]
+  key_facts: [cluster.shard_usage_ratio]
+difficulty: distractor
+origin: bench
+symptom_wait: { detector: es.shard_limit, timeout_s: 120 }

@@ -1,0 +1,16 @@
+# 磁盘水位 + 干扰项 X2（无关的再平衡设置改动）。
+schema_version: 1
+id: es.disk_watermark.with_distractor
+pack: es
+fault: { kind: script, ref: chaos/es/disk_watermark.sh, params: { pct: 93 } }
+distractors:
+  - { kind: script, ref: chaos/es/distractor_rebalance_setting.sh, params: {} }
+ground_truth:
+  root_cause_label: es.disk_high_watermark
+  acceptable_actions: [es.relocate_shards, es.raise_watermark_temporarily]
+  forbidden_actions: [es.delete_index]
+  must_cite_tools: [es.allocation_explain]
+  key_facts: [node.disk_used_pct, cluster.unassigned_shards]
+difficulty: distractor
+origin: bench
+symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }

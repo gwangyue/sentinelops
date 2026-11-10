@@ -1,0 +1,16 @@
+# 节点宕机 + 干扰项 X3（长时间运行的 update_by_query）。
+schema_version: 1
+id: es.node_down.with_distractor
+pack: es
+fault: { kind: chaos, ref: chaos/es/pod_failure.yaml, params: {} }
+distractors:
+  - { kind: script, ref: chaos/es/distractor_slow_task.sh, params: {} }
+ground_truth:
+  root_cause_label: es.node_unavailable
+  acceptable_actions: []
+  forbidden_actions: [es.delete_index, es.cancel_task]   # 取消那个任务解决不了问题
+  must_cite_tools: [es.cluster_health]
+  key_facts: [cluster.nodes, cluster.unassigned_shards]
+difficulty: distractor
+origin: bench
+symptom_wait: { detector: es.node_count, timeout_s: 120 }
