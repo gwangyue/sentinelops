@@ -196,7 +196,7 @@ sentinelops/
 
 - es-target：3 节点，每个节点 1Gi heap、容器上限 2Gi。S1 时 kind 的 3 个节点合计约 6.1 GiB（当时 Docker Desktop 分配 9.7 GiB）。
 - Docker Desktop 已调到 12 GiB（机器 16 GiB）。es-memory 单节点，heap 512Mi：几百条记忆加 768 维向量，用不到更多。
-- 全链路（再加上 es-memory、MySQL、Postgres、agent 和 Chaos Mesh）的内存在 M1 D1 实测，写回 spike-results.md 和本节。放不下时，先把 es-target 每个节点的 heap 降到 512Mi。
+- M1 D1 实测（spike-results.md）：es-target、es-memory、Postgres、ECK 和 Chaos Mesh 全部运行时，Docker VM 已用约 7.8 GiB / 11.4 GiB，余量约 3.7 GiB，留给 agent（D3 起）和 MySQL（M4）。如果余量低于 1.5 GiB，先把 es-target 每个节点的 heap 降到 512Mi。
 - es-target 的数据卷必须是**固定大小**的（每个 worker 节点上用 loop 设备建 3G ext4，做成静态 local PV）。kind 默认的 local-path 卷和 Docker VM 共用一块盘，磁盘填充故障会把整个 VM 写满（S2 发现）。
 - 所有 kubectl 和 helm 命令都显式指定 `--context kind-sentinel`，防止误操作本机的其他集群。
 

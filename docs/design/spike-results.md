@@ -158,6 +158,28 @@
 | 08 M2 D8、§7 | 加 2 种性能类故障；风险表补“故障集中在分配类” |
 | 08 §6.4、ADR-008 | 模型型号只在 `config/models.yaml` 里出现，测试扫描 `src/` |
 
-## M1 D1 全链路内存（待补）
+## M1 D1 全链路内存（2026-11-10）
 
-D1 跑完 `make kind-up` 后填写。
+环境：Docker Desktop 12 GiB（VM 内可见 11.4 GiB）/ 4 核。`make kind-up` 完成后稳定 15 分钟再测，命令是 `deploy/kind/mem_report.sh`。26 个 Pod，0 次重启，0 次 OOM。
+
+| 项 | 实测 |
+|---|---|
+| Docker VM 总体 | 已用 7958 MiB / 11697 MiB，可用 3738 MiB |
+| kind 节点 | control-plane 1.35 GiB · worker 3.37 GiB · worker2 2.81 GiB |
+| es-target ×3（heap 1g，上限 2Gi） | 每个约 1.49–1.56 GiB |
+| es-memory（heap 512m，上限 1Gi） | 915 MiB |
+| postgres | 23 MiB |
+| ECK operator + Chaos Mesh（全部组件） | 约 0.2 GiB |
+| kube-apiserver | 690 MiB |
+| agent | 未部署（D3 起才有镜像），到时补测 |
+| mysql-target | 未部署（M4） |
+
+**结论**：余量约 3.7 GiB，高于 1.5 GiB 的降级线，es-target 保持 1g heap。agent 预计不超过 1 GiB，加上之后仍有余量。
+
+**要注意**：es-memory 的工作集 915 MiB，已经接近 1Gi 的上限。其中包含可回收的页缓存，所以不一定会 OOM。但记忆写多了以后要观察；出现 OOMKilled 时，先把上限调到 1.5Gi，heap 不变。
+
+**D1 顺带确认**：
+- **声明式只读用户可用**：ECK 的 `spec.auth.roles` 加上 basic-auth 类型的 fileRealm Secret。`deploy/kind/ro_check.sh` 的 14 项全部通过：10 个读请求返回 200，4 个写入或读文档的请求返回 403。
+- **`kind-up` 可以重复执行**：第二次运行时，每一步都显示“已存在，跳过”；`kubectl diff` 为空，Pod 没有重启。
+- **填盘的百分比要按 ES 的口径算**：ext4 默认保留 5% 给 root，`df` 的 used 列不含这部分，ES 却把它算作已用。第一次按 used 列计算，结果填到了 99%（越过 flood stage）。改成 1 − 可用/总量之后，ES 看到的是 93%。撤销后恢复到 5%，集群 green。
+- **安全检查**：对非挂载点（`/var/lib`）和非 loop 设备的挂载点（节点根目录，挂载源是 overlay），都拒绝执行，exit 3。
