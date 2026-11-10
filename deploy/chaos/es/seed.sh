@@ -7,7 +7,7 @@ set -euo pipefail
 CTX=kind-sentinel; PORT=${SEED_PORT:-$((20000 + RANDOM % 1000))}
 kc() { kubectl --context "$CTX" "$@"; }
 kc -n targets port-forward svc/es-target-es-http "$PORT:9200" >/dev/null 2>&1 &
-PF=$!; trap 'kill $PF 2>/dev/null' EXIT
+PF=$!; trap 'kill $PF 2>/dev/null || true' EXIT  # set -e 下 kill 失败会让脚本退出码变成 1
 PW=$(kc -n targets get secret es-target-es-elastic-user -o go-template='{{.data.elastic | base64decode}}')
 es() { curl -sk -u "elastic:$PW" "$@"; }
 U=https://localhost:$PORT

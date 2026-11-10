@@ -7,7 +7,9 @@ kc() { kubectl --context "$CTX" "$@"; }
 _PORT=$((21000 + RANDOM % 1000))
 kc -n "$NS" port-forward pod/es-target-es-data-0 "$_PORT:9200" >/dev/null 2>&1 &
 _PF=$!
-trap 'kill $_PF 2>/dev/null' EXIT
+# `|| true` 必须有：port-forward 进程可能已经先退出了，kill 会失败；在 set -e 下，EXIT trap 里失败的命令
+# 会把整个脚本的退出码变成 1——注入其实已经成功，故障台却当成失败（M2 录制时"exit 1、stderr 为空"的原因）
+trap 'kill $_PF 2>/dev/null || true' EXIT
 _PW=$(kc -n "$NS" get secret es-target-es-elastic-user -o go-template='{{.data.elastic | base64decode}}')
 U=https://localhost:$_PORT
 es() { curl -sk -u "elastic:$_PW" -H 'content-type: application/json' "$@"; }

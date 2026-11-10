@@ -5,7 +5,8 @@ set -uo pipefail
 CTX=kind-sentinel; PORT=19200; ES=https://localhost:$PORT
 kc() { kubectl --context "$CTX" "$@"; }
 kc -n targets port-forward svc/es-target-es-http $PORT:9200 >/dev/null 2>&1 &
-PF=$!; trap 'kill $PF 2>/dev/null' EXIT; sleep 3
+# kill 后面的 || true：port-forward 先退出时 kill 会失败，在 set -e 的脚本里这会让退出码变成 1
+PF=$!; trap 'kill $PF 2>/dev/null || true' EXIT; sleep 3
 
 ADM_PW=$(kc -n targets get secret es-target-es-elastic-user -o go-template='{{.data.elastic | base64decode}}')
 RO_PW=$(kc -n targets get secret sentinel-ro-user -o go-template='{{.data.password | base64decode}}')
