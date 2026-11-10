@@ -156,12 +156,13 @@ def sweep(pack: LoadedPack, tb: ToolBackend) -> None:
     for tid, t in pack.tools.items():
         if t.impl.args_schema is None or not any(f.is_required() for f in t.impl.args_schema.model_fields.values()):
             tb.call(tid)
+    # 每个索引都录带参数的调用，不只是非 green 的：flood stage 的只读块出现在 green 的索引上（M2 外部改编场景发现）
+    tb.call("es.index_settings", {"index": "*"})
     indices = tb.call("es.cat_indices")
     if indices.ok:
         for row in indices.raw:
-            if row["health"] != "green":
-                tb.call("es.cat_shards", {"index": row["index"]})
-                tb.call("es.index_settings", {"index": row["index"]})
+            tb.call("es.cat_shards", {"index": row["index"]})
+            tb.call("es.index_settings", {"index": row["index"]})
     # TODO(edge): allocation_explain 针对每个未分配分片的带参调用；目前只录默认的那一个
 
 
