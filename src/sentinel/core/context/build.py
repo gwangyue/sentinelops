@@ -1,17 +1,24 @@
-"""上下文组装（04 §2.2、§3.7–3.9）。M1 只组装 L0（问题事件）和 L1（事实卡片 + 环境）。
+"""上下文组装（04 §2.2、§3.7–3.9）：L0 问题事件、L1 事实卡片、L5 相似事故、L3 变更、L4 知识。
 
-负责：按 context_policy 的层预算放入条目、记录被删掉的条目（上下文报告）、
-      把来自被管系统的文本包进 <untrusted> 并转义、产出 ContextBundle。
-不负责：L3 变更、L4 知识、L5 相似事故（M2 D5–D7）；L2 下钻在诊断过程中由工具调用产生。
+负责：每层按自己的预算放入条目；总量超出 preassembled_total 时按 degrade_order 降级；
+      记录每个被删掉的条目和原因（上下文报告）；来自被管系统的文本包进 <untrusted> 并转义；产出 ContextBundle。
+不负责：各层的数据从哪里来（变更层 changes.py、知识层 knowledge_layer.py、记忆层 memory_layer.py）；
+        L2 下钻在诊断过程中由工具调用产生，压缩见 core/diagnosis/compaction.py。
 整条流水线没有 LLM 调用（P1）。
 """
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from sentinel.contracts import ContextBundle, ContextItem, Fact, FactSheet, Finding
+from sentinel.core.context.changes import Change
+from sentinel.core.context.knowledge_layer import render_hit as render_knowledge
+from sentinel.core.context.memory_layer import MemoryHit
+from sentinel.core.context.memory_layer import render_hit as render_memory
+from sentinel.core.knowledge.es_index import KnowledgeHit
 from sentinel.sdk import estimate_tokens
 
 
@@ -36,54 +43,116 @@ def _fact_line(x: Fact) -> str:
     return f"{x.status:<8} {x.subject} {x.key}={x.value} baseline={x.baseline} ({x.observation_id})"
 
 
+@dataclass
+class _Entry:
+    layer: str  # L0 / L1 / L3 / L4 / L5
+    ref: str
+    text: str
+    protected: bool  # 不可删（04 §3.7）：L0 全部、L1 的异常项、L5 的 top-1
+    included: bool = True
+    drop_reason: str | None = None
+
+    @property
+    def tokens(self) -> int:
+        return estimate_tokens(self.text)
+
+
+def _fit_layer(entries: list[_Entry], budget: int) -> None:
+    """单层预算：按顺序放，受保护的条目总是放；放不下的标记为 budget。"""
+    used = 0
+    for e in entries:
+        if e.protected or used + e.tokens <= budget:
+            used += e.tokens
+        else:
+            e.included, e.drop_reason = False, "budget"
+
+
+def _degrade(layers: dict[str, list[_Entry]], total: int, order: Sequence[str]) -> None:
+    """04 §3.7：总量超出时，按降级顺序从各层的末尾往前删（L3 末尾是最早的变更；L5 保留 top-1）。"""
+
+    def used() -> int:
+        return sum(e.tokens for es in layers.values() for e in es if e.included)
+
+    for step in order:
+        layer = "L1" if step == "L1_related" else step
+        for e in reversed(layers.get(layer, [])):
+            if used() <= total:
+                return
+            if e.included and not e.protected:
+                e.included, e.drop_reason = False, f"degrade:{step}"
+
+
 def build_context(
     investigation_id: str,
     findings: list[Finding],
     sheets: list[FactSheet],
     env: Mapping[str, Any],
     policy: Mapping[str, Any],
+    *,
+    changes: Sequence[Change] = (),
+    knowledge: Sequence[KnowledgeHit] = (),
+    memories: Sequence[MemoryHit] = (),
 ) -> ContextBundle:
     budgets = policy["budgets"]
-    items: list[ContextItem] = []
-    sections: list[str] = []
+    layers: dict[str, list[_Entry]] = {}
 
-    # L0：问题事件，全部保留（04 §3.7"不可删"）
-    l0 = [_finding_line(f) for f in findings]
-    for f, line in zip(findings, l0, strict=True):
-        items.append(ContextItem(layer="L0", ref=f.id, tokens=estimate_tokens(line), included=True, drop_reason=None))
-    sections.append("## L0 问题事件\n" + wrap("findings", "\n".join(l0)))
+    # L0：问题事件，全部保留
+    layers["L0"] = [_Entry("L0", f.id, _finding_line(f), protected=True) for f in findings]
+    # L1：异常项排在前面先占预算，并且不可删；其余是"和问题相关的关键项"，降级时最后才删
+    facts = sorted((x for s in sheets for x in s.facts), key=lambda x: x.status != "abnormal")
+    layers["L1"] = [_Entry("L1", x.observation_id, _fact_line(x), protected=x.status == "abnormal") for x in facts]
+    # L5：按相似度排好序；top-1 不可删（04 §3.7）
+    layers["L5"] = [_Entry("L5", m.memory_id, render_memory(m), protected=i == 0) for i, m in enumerate(memories)]
+    # L3：最新的变更在前，降级时从末尾（最早的）删
+    layers["L3"] = [
+        _Entry("L3", c.observation_id, c.line(), protected=False)
+        for c in sorted(changes, key=lambda c: c.since, reverse=True)
+    ]
+    # L4：整层可以删
+    layers["L4"] = [_Entry("L4", f"knowledge/{h.doc_id}", render_knowledge(h), protected=False) for h in knowledge]
 
-    # L1：异常项不可删；其余按预算从后往前删（04 §3.7 降级顺序：先删和问题无关的关键项）
-    budget = budgets["L1"]
-    kept: list[str] = []
-    used = 0
-    facts = [x for s in sheets for x in s.facts]
-    ordered = sorted(facts, key=lambda x: x.status != "abnormal")  # 异常项排在前面，先占预算
-    for x in ordered:
-        line = _fact_line(x)
-        t = estimate_tokens(line)
-        if x.status == "abnormal" or used + t <= budget:
-            kept.append(line)
-            used += t
-            items.append(ContextItem(layer="L1", ref=x.observation_id, tokens=t, included=True, drop_reason=None))
-        else:
-            items.append(ContextItem(layer="L1", ref=x.observation_id, tokens=t, included=False, drop_reason="budget"))
+    for name, entries in layers.items():
+        _fit_layer(entries, budgets[name])
+    _degrade(layers, budgets.get("preassembled_total", 10**9), policy.get("degrade_order", []))
+    # TODO(edge): L1 的单条异常项本身超出预算时仍然保留（异常项不可删），预算会被突破；上下文报告里能看到
+
+    def kept(name: str) -> list[str]:
+        return [e.text for e in layers[name] if e.included]
+
+    # 顺序（04 §2.1）：最确定的在前，记忆紧跟事实，知识最可替代、放在最后
+    sections = ["## L0 问题事件\n" + wrap("findings", "\n".join(kept("L0")))]
     omitted = sum(s.omitted_normal_count for s in sheets)
     env_line = " · ".join(f"{k}={v}" for k, v in sorted(env.items()) if v not in (None, [], {}))
     sections.append(
         f"## L1 事实卡片（省略正常项 {omitted} 条，表示这些指标都正常）\n"
-        + wrap("facts", "\n".join(kept))
+        + wrap("facts", "\n".join(kept("L1")))
         + (f"\n环境（人工维护）：{env_line}" if env_line else "")
     )
-    # TODO(edge): L1 的单条异常项本身超出预算时仍然保留（异常项不可删），预算会被突破；上下文报告里能看到
+    if kept("L5"):
+        # 记忆的文本由系统模板生成（05 §3.1），不是被管系统的原文
+        sections.append("## L5 相似事故（待验证的假设，不是结论）\n" + "\n".join(kept("L5")))
+    if kept("L3"):
+        window = policy.get("changes", {}).get("window_hours", 24)
+        sections.append(
+            f"## L3 最近的变更（{window} 小时内，和上一次快照比较）\n" + wrap("changes", "\n".join(kept("L3")))
+        )
+    if kept("L4"):
+        # runbook 来自专家包（git），不是被管系统的内容，不需要不可信包装
+        sections.append("## L4 知识（runbook，按检测器检索）\n" + "\n\n".join(kept("L4")))
 
-    rendered = "\n\n".join(sections)
-    tokens_by_layer = {layer: sum(i.tokens for i in items if i.layer == layer and i.included) for layer in ("L0", "L1")}
+    items = [
+        ContextItem(layer=e.layer, ref=e.ref, tokens=e.tokens, included=e.included, drop_reason=e.drop_reason)
+        for name in ("L0", "L1", "L5", "L3", "L4")
+        for e in layers[name]
+    ]
+    tokens_by_layer = {
+        name: sum(e.tokens for e in es if e.included) for name, es in layers.items() if es or name in ("L0", "L1")
+    }
     policy_hash = "sha256:" + hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
     return ContextBundle(
         investigation_id=investigation_id,
         policy_hash=policy_hash,
         items=items,
         tokens_by_layer=tokens_by_layer,
-        rendered=rendered,
+        rendered="\n\n".join(sections),
     )

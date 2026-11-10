@@ -30,7 +30,8 @@ tools:
 actions: []                      # 动作目录在 M3 加
 fact_builders:
   - entry: "sentinel.packs.es.facts:cluster_facts"
-knowledge: []                    # runbook 在 M2 D5 加
+knowledge:                       # runbook（04 §3.5），按 Elastic 官方文档编写，每篇文件头注明出处
+  - path: knowledge/
 scenarios: scenarios/
 # 根因标签（ADR-011）：诊断的 root_cause_label 只能从这里选，场景的真实答案也用这些标签（06 §5.3）
 root_causes:

@@ -23,6 +23,8 @@ app.add_typer(inv_app, name="investigations")
 bench_app = typer.Typer(no_args_is_help=True, help="故障台（02 §6）")
 dataset_app = typer.Typer(no_args_is_help=True, help="数据集（06 §5）")
 eval_app = typer.Typer(no_args_is_help=True, help="评测（06 篇）")
+knowledge_app = typer.Typer(no_args_is_help=True, help="L4 知识层（04 §3.5）")
+app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(bench_app, name="bench")
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(eval_app, name="eval")
@@ -345,3 +347,52 @@ def eval_compare(
         )
         if c.excluded_replay_miss:
             typer.echo(f"      录制未覆盖、已剔除：{', '.join(c.excluded_replay_miss)}")
+
+
+@knowledge_app.command("index")
+def knowledge_index(pack: Annotated[str, typer.Option()] = "es") -> None:
+    """把专家包 knowledge/ 下的 runbook 切成段落、算向量，重建 es-memory 上的知识索引。"""
+    from sentinel.core.knowledge.corpus import knowledge_hash, sections
+    from sentinel.core.knowledge.es_index import build_index, index_name
+    from sentinel.core.llm.config import load_models_config
+    from sentinel.core.llm.embed import embed
+    from sentinel.core.packs_registry import load_pack
+
+    p = load_pack(pack)
+    secs = sections(p)
+    dims = int(load_models_config().purposes["embedding"].params()["output_dimensionality"])
+    n = build_index(pack, secs, knowledge_hash(p), embed, dims)
+    typer.echo(f"{index_name(pack)}：{n} 段（来自 {len({s.doc_id.split('#')[0] for s in secs})} 篇 runbook）")
+    for s in secs:
+        typer.echo(f"  {s.doc_id:<26} {','.join(s.detectors):<55} {s.heading}")
+
+
+@inv_app.command("context")
+def inv_context(inv_id: str) -> None:
+    """上下文报告（04 §3.9；golden-demo 第 4 步）：每层的 token、放了什么、删了什么、为什么删，以及 L2 压缩记录。"""
+    from collections import defaultdict
+
+    from sentinel.contracts import ContextBundle
+    from sentinel.core.store import open_store
+
+    store = open_store()
+    r = store.get_investigation(inv_id)
+    if r is None or r.context_bundle is None:
+        raise typer.BadParameter(f"调查 {inv_id} 没有上下文包")
+    b = ContextBundle.model_validate(r.context_bundle)
+    by: dict[str, list] = defaultdict(list)  # type: ignore[type-arg]
+    for it in b.items:
+        by[it.layer].append(it)
+    typer.echo(f"上下文报告 {inv_id}   策略 {b.policy_hash[:19]}…")
+    for layer in ("L0", "L1", "L5", "L3", "L4"):
+        items = by.get(layer, [])
+        kept = [i for i in items if i.included]
+        tokens, dropped = b.tokens_by_layer.get(layer, 0), len(items) - len(kept)
+        typer.echo(f"  {layer}  {tokens:>5} token  放入 {len(kept)} 条  删除 {dropped} 条")
+        for i in items:
+            if not i.included:
+                typer.echo(f"        删除 {i.ref}（{i.tokens} token）：{i.drop_reason}")
+    for e in store.audit_events(inv_id):
+        if e.type == "diagnosis.completed" and e.payload.get("compaction", {}).get("compacted"):
+            c = e.payload["compaction"]
+            typer.echo(f"  L2 压缩：{len(c['compacted'])} 条，{c['tokens_before']} → {c['tokens_after']} token")

@@ -4,7 +4,7 @@ import ast
 
 from tests.guards.scan import SRC, py_files
 
-ALLOWED = {"core/llm/chat.py"}
+ALLOWED = {"core/llm/chat.py", "core/llm/embed.py"}  # 聊天模型和文本向量各一个入口
 PROVIDER_MODULES = ("langchain_google_genai", "google.genai", "langchain_openai", "langchain_anthropic")
 
 

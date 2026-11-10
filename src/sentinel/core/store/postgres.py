@@ -27,9 +27,11 @@ class PgStore:
         return psycopg.connect(self.url, row_factory=dict_row, autocommit=False)
 
     def init(self) -> None:
-        sql = files("sentinel.core.store").joinpath("sql/001_init.sql").read_text(encoding="utf-8")
+        sql_dir = files("sentinel.core.store").joinpath("sql")
         with self._conn() as c:
-            c.execute(sql)  # 文件内容是受信任的 DDL
+            # 按文件名顺序执行；每个文件都只用 IF NOT EXISTS，可以重复执行
+            for f in sorted((p for p in sql_dir.iterdir() if p.name.endswith(".sql")), key=lambda p: p.name):
+                c.execute(f.read_text(encoding="utf-8"))  # 文件内容是受信任的 DDL
 
     # ---------- 调查 ----------
     def create_investigation(self, rec: InvestigationRecord) -> None:
@@ -134,6 +136,21 @@ class PgStore:
         with self._conn() as c:
             rows = c.execute("SELECT * FROM agent_versions ORDER BY seq").fetchall()
         return [AgentVersion.model_validate(r) for r in rows]
+
+    # ---------- 配置快照 ----------
+    def latest_snapshot(self, target: str, tool: str) -> tuple[Any, datetime] | None:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT raw, ts FROM snapshots WHERE target = %s AND tool = %s ORDER BY ts DESC LIMIT 1", (target, tool)
+            ).fetchone()
+        return (row["raw"], row["ts"]) if row else None
+
+    def save_snapshot(self, target: str, tool: str, raw: Any, ts: datetime) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO snapshots (target, tool, ts, raw) VALUES (%s, %s, %s, %s)",
+                (target, tool, ts, json.dumps(raw)),
+            )
 
     # ---------- 观测索引 ----------
     def add_observation(self, obs: Observation) -> None:

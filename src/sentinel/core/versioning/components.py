@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from sentinel.contracts import VersionComponents
+from sentinel.core.knowledge.corpus import knowledge_hash
 from sentinel.core.llm.config import load_models_config
 from sentinel.core.packs_registry import LoadedPack
 
@@ -76,6 +77,8 @@ def collect_components(packs: list[LoadedPack], code_sha: str | None = None) -> 
     return VersionComponents(
         prompts={
             **{f.name: _sha(f.read_text(encoding="utf-8")) for f in sorted(PROMPTS_DIR.glob("*.md"))},
+            # runbook 打开 L4 之后会进入上下文；改了 runbook，Agent 的行为就变了（04 §3.5）
+            **{f"knowledge:{p.manifest.pack}": knowledge_hash(p) for p in packs},
             # 根因表会渲染进诊断提示词，所以它的变化也要体现在版本里（ADR-011）
             **{
                 f"root_causes:{p.manifest.pack}": _sha(
