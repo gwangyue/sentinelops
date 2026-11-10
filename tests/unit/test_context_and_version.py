@@ -7,7 +7,7 @@ from sentinel.core.context.build import build_context, escape_untrusted
 from sentinel.core.packs_registry import load_pack
 from sentinel.core.store import MemoryStore
 from sentinel.core.versioning.components import collect_components, components_hash, load_context_policy
-from sentinel.core.versioning.freeze import FreezeError, freeze
+from sentinel.core.versioning.freeze import FreezeError, freeze, require_frozen
 from sentinel.core.versioning.models import ModelAliasError
 
 PACK = load_pack("es")
@@ -84,8 +84,8 @@ def test_freeze_rejects_empty_note_dirty_tree_and_alias() -> None:
     c = collect_components([PACK], code_sha="a")
     with pytest.raises(FreezeError):
         freeze(store, c, "  ")
-    with pytest.raises(FreezeError):
-        freeze(store, c, "x", dirty=True)
+    with pytest.raises(FreezeError, match="未提交"):
+        freeze(store, c, "x", dirty=["src/sentinel/core/x.py"])
     bad = c.model_copy(update={"models": {"diagnosis": {"provider": "google", "model": "x-flash-latest"}}})
     with pytest.raises(ModelAliasError):
         freeze(store, bad, "x")
@@ -95,3 +95,20 @@ def test_components_cover_root_causes_and_tool_args() -> None:
     c = collect_components([PACK], code_sha="a")
     assert "root_causes:es" in c.prompts and "diagnose.md" in c.prompts
     assert len(c.tools) == 11 and c.models["diagnosis"]["thinking_budget"]
+
+
+def test_running_with_uncommitted_changes_is_refused() -> None:
+    store = MemoryStore()
+    c = collect_components([PACK], code_sha="a")
+    freeze(store, c, "v1")
+    with pytest.raises(FreezeError, match="未提交"):
+        require_frozen(store, c, dirty=["config/models.yaml"])
+    assert require_frozen(store, c).seq == 1
+
+
+def test_behavior_sha_covers_code_config_and_lockfiles() -> None:
+    # 读的是本地 git 仓库，不访问网络
+    from sentinel.core.versioning.components import BEHAVIOR_PATHS, behavior_sha
+
+    assert set(BEHAVIOR_PATHS) == {"src", "config", "uv.lock", "pyproject.toml"}
+    assert behavior_sha().startswith("sha256:") and behavior_sha() == behavior_sha()

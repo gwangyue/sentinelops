@@ -29,17 +29,27 @@ def load_context_policy() -> dict[str, Any]:
     return dict(yaml.safe_load(CONTEXT_POLICY.read_text(encoding="utf-8")))
 
 
-def git_head() -> str:
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, check=True
-    ).stdout.strip()
+# 影响 Agent 行为的内容（ADR-012）：代码、配置、依赖版本。文档、测试、部署脚本的改动不产生新版本
+BEHAVIOR_PATHS = ("src", "config", "uv.lock", "pyproject.toml")
 
 
-def git_dirty() -> bool:
-    out = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, capture_output=True, text=True, check=True
-    ).stdout
-    return bool(out.strip())
+def _git(*args: str) -> str:
+    return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def behavior_sha() -> str:
+    """HEAD 里这几个路径的 git 对象哈希（目录是 tree，文件是 blob）合在一起再算 sha256。
+
+    只看已提交的内容：未提交的改动由 behavior_dirty() 拦住，所以这个哈希一定对应一份可以检出的代码。
+    """
+    objs = [f"{path}={_git('rev-parse', f'HEAD:{path}')}" for path in BEHAVIOR_PATHS]
+    return "sha256:" + _sha("\n".join(objs))
+
+
+def behavior_dirty() -> list[str]:
+    """上述路径里未提交的改动（包括未跟踪的新文件），返回文件列表；空列表表示干净。"""
+    out = _git("status", "--porcelain", "--untracked-files=normal", "--", *BEHAVIOR_PATHS)
+    return [line[3:] for line in out.splitlines() if line.strip()]
 
 
 def collect_components(packs: list[LoadedPack], code_sha: str | None = None) -> VersionComponents:
@@ -78,7 +88,7 @@ def collect_components(packs: list[LoadedPack], code_sha: str | None = None) -> 
         context_policy=load_context_policy(),
         memory_policy={},  # M2 D6–D7
         packs={p.manifest.pack: p.manifest.version for p in packs},
-        code_sha=code_sha if code_sha is not None else git_head(),
+        code_sha=code_sha if code_sha is not None else behavior_sha(),
     )
 
 

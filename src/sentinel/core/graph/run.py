@@ -18,7 +18,7 @@ from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack, load_pack
 from sentinel.core.store import Store, open_store
 from sentinel.core.toolbackend import Mode, ToolBackend, open_backend
-from sentinel.core.versioning.components import collect_components, load_context_policy
+from sentinel.core.versioning.components import behavior_dirty, collect_components, load_context_policy
 from sentinel.core.versioning.freeze import require_frozen
 
 OBS_ROOT = Path(os.environ.get("SENTINEL_OBS_ROOT", "var/observations"))
@@ -42,7 +42,7 @@ def real_deps(store: Store, mode: Mode, fixture: Path | None) -> Deps:
         packs=packs,
         make_backend=make_backend,
         make_model=chat_model,
-        current_version=lambda: require_frozen(store, collect_components(list(packs.values()))),
+        current_version=lambda: require_frozen(store, collect_components(list(packs.values())), dirty=behavior_dirty()),
         load_env=load_env,
         policy=load_context_policy(),
     )

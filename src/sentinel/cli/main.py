@@ -113,10 +113,10 @@ def version_freeze(note: Annotated[str, typer.Option(help="这一版改了什么
     """冻结当前的提示词、模型、工具、策略和代码为一个版本；内容相同就复用（03 §5.2）。"""
     from sentinel.core.graph.run import load_packs
     from sentinel.core.store import open_store
-    from sentinel.core.versioning.components import collect_components, git_dirty
+    from sentinel.core.versioning.components import behavior_dirty, collect_components
     from sentinel.core.versioning.freeze import freeze
 
-    v, created = freeze(open_store(), collect_components(list(load_packs().values())), note, dirty=git_dirty())
+    v, created = freeze(open_store(), collect_components(list(load_packs().values())), note, dirty=behavior_dirty())
     typer.echo(f"{'新建' if created else '复用'} v{v.seq} {v.hash[:19]}…  parent={(v.parent or '-')[:19]}  {v.note}")
 
 

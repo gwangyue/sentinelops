@@ -358,7 +358,7 @@ class VersionComponents(BaseModel):
     context_policy: dict                  # 上下文策略的完整配置（详见 04 篇）
     memory_policy: dict                   # 记忆检索和写入策略的完整配置（详见 05 篇）
     packs: dict[str, str]                 # 专家包 → 版本号
-    code_sha: str                         # git commit
+    code_sha: str                         # 影响行为的内容（src/、config/、依赖锁文件）的哈希（ADR-012）
 
 class AgentVersion(BaseModel):
     schema_version: int = 1
