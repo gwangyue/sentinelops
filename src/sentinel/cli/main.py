@@ -252,6 +252,49 @@ def dataset_sync(
     typer.echo(f"已同步 sentinel-{pack}：标签 {tag}  dev {counts['dev']} / heldout {counts['heldout']}")
 
 
+@dataset_app.command("streams")
+def dataset_streams(
+    pack: Annotated[str, typer.Option()] = "es",
+    seed: Annotated[int, typer.Option(help="固定种子：顺序在看结果之前定下来（05 §4.2）")] = 0,
+) -> None:
+    """生成事故流文件 datasets/streams/<pack>.yaml（只用 dev 用例，06 §5.2）。生成后提交，再跑评测。"""
+    import yaml
+
+    from sentinel.eval.dataset import load_examples
+    from sentinel.eval.stream import make_streams, streams_file
+
+    streams = make_streams(load_examples(pack), seed)
+    path = streams_file(pack)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump({"pack": pack, "seed": seed, "streams": streams}, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    for name, ids in streams.items():
+        typer.echo(f"{name}（{len(ids)} 个用例）：{' → '.join(ids)}")
+
+
+@eval_app.command("stream")
+def eval_stream(
+    pack: Annotated[str, typer.Option()] = "es",
+    dataset_tag: Annotated[str | None, typer.Option(help="数据集版本标签（必填）")] = None,
+    reps: Annotated[int, typer.Option(help="每条流重复几次")] = 3,
+    version: Annotated[str | None, typer.Option(help="只能等于当前版本")] = None,
+) -> None:
+    """按事故流顺序、带状态地评测（05 §4.2；M-E1）。不走 evaluate()，trace 照样上传（06 §9）。"""
+    from sentinel.core.versioning.freeze import FreezeError
+    from sentinel.eval.guards import EvalGuardError
+    from sentinel.eval.runner import EvalError
+    from sentinel.eval.stream import run_streams
+
+    try:
+        path, side = run_streams(pack, dataset_tag, reps, version)
+    except (EvalGuardError, EvalError, FreezeError) as e:
+        typer.echo(f"拒绝评测：{e}", err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"结果 {path}\n记忆侧指标 {side}")
+
+
 @eval_app.command("run")
 def eval_run(
     pack: Annotated[str, typer.Option()] = "es",
@@ -312,7 +355,10 @@ def eval_compare(
     dataset_tag: Annotated[
         str | None, typer.Option(help="数据集版本标签（必填）：两边的结果必须来自同一个标签")
     ] = None,
-    by: Annotated[str | None, typer.Option(help="分组：difficulty（06 §6.2；08 §7 要求按难度分组报告）")] = None,
+    by: Annotated[
+        str | None, typer.Option(help="分组：difficulty（06 §6.2）；occurrence（事故流里第几次遇到同一根因，05 §4.2）")
+    ] = None,
+    stream: Annotated[bool, typer.Option(help="比较事故流的结果（sentinel eval stream）")] = False,
 ) -> None:
     """配对比较 B − A 的 top1：点估计、按场景聚类的 bootstrap 95% 区间、判断（06 §4.2）。"""
     from sentinel.eval import results
@@ -323,7 +369,8 @@ def eval_compare(
     tag = require_dataset_tag(dataset_tag)
 
     def load(name: str) -> list:  # type: ignore[type-arg]
-        return results.load(results.result_file(name.replace("baseline:", "baseline-"), tag, split))
+        name = name.replace("baseline:", "baseline-") + ("__stream" if stream else "")
+        return results.load(results.result_file(name, tag, split))
 
     ra, rb = load(a), load(b)
     groups: dict[str, set[str] | None] = {"全部": None}
@@ -332,8 +379,17 @@ def eval_compare(
         diff = {e.id: e.metadata.difficulty for e in load_examples("es")}
         for d in ("single", "distractor", "compound"):
             groups[d] = {eid for eid, v in diff.items() if v == d}
+    elif by == "occurrence":
+        if not stream:
+            raise typer.BadParameter("--by occurrence 只用于 --stream")
+        from sentinel.eval.stream import load_streams, occurrences
+
+        labels = {e.id: e.outputs.root_cause_label for e in load_examples("es")}
+        occ = occurrences(load_streams("es"), labels)
+        groups["第 1 次遇到"] = {eid for eid, n in occ.items() if n == 1}
+        groups["第 2 次及以后"] = {eid for eid, n in occ.items() if n >= 2}
     elif by is not None:
-        raise typer.BadParameter("--by 目前只支持 difficulty")
+        raise typer.BadParameter("--by 只支持 difficulty、occurrence")
     typer.echo(f"{b} − {a}（{tag} / {split}，主指标 top1，区间按场景重采样，06 §4.2）")
     for name, ids in groups.items():
         sa = [x for x in ra if ids is None or x.example_id in ids]
@@ -362,6 +418,12 @@ def eval_compare(
             f"    {metric:<22} {a} {m.a_score:{fmt}}  {b} {m.b_score:{fmt}}  差值 {m.point:+{fmt}}  "
             f"95% 区间 [{m.low:+{fmt}}, {m.high:+{fmt}}]  {verdict}"
         )
+    if stream:
+        from sentinel.eval.stream import memory_summary
+
+        for name in (a, b):
+            side = results.result_file(f"{name}__stream", tag, split).with_suffix(".memory.jsonl")
+            typer.echo(f"  记忆侧（{name}）：{memory_summary(side, rb if name == b else ra)}")
 
 
 @knowledge_app.command("index")
