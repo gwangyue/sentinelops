@@ -423,6 +423,20 @@ sequenceDiagram
 4. 外部 Agent 能不能直接调用 `relocate_shards`？——不能。MCP 只导出只读工具。
 5. 为什么回放评测时，修复动作也能被"验证"？——录制时保存了执行动作之后的观测结果，回放模式下的执行器模拟器读取这些结果。
 
+## 实现说明（M3 D10–D11，和本篇设计的差异）
+
+| 位置 | 设计 | 实现 | 原因 |
+|---|---|---|---|
+| §1 plan 节点 | 从动作目录选动作 · 前置检查 · 预演 | LLM 只输出 `ActionProposal`（ADR-013），提示词 `prompts/plan.md`；输出不是合法 JSON 也算一次不安全提议 | 安全字段不经过 LLM；"不安全提议"的定义因此只有一条：这 3 个字段通不过校验 |
+| §1 plan 节点 | 没有可用动作 → 输出报告 | 模型选 `none` 时记 `plan.proposed {action: null}`，结局 `no_action`；前置检查或影响范围不通过时结局 `plan_failed` 并升级 | 前置检查不通过不是"不安全"，但也不能当作诊断完成 |
+| §3.2 执行 | 调查图调用执行器 | 线上：execute 节点只把三个 ID 写进 `execution_requests`，等独立进程 `python -m sentinel.exec` 写回结果（最多等 300 秒）；评测：同一段执行器代码在进程内运行，把"执行"换成回放切到 post 阶段 | ADR-005；回放执行器和真实执行器共用全部校验 |
+| §3.4 审批 | approve 节点只有 interrupt | 同设计；审批决定和有效期在 execute 节点里从存储读，resume 只带"已恢复"，不带任何内容 | 恢复时节点从第一行重新执行，读取放在下一个节点更干净 |
+| §3.4 执行器的拒绝 | — | 哈希不一致、审批没有通过记 `action.precheck_failed`（payload 里 `stage: approval`）；审批过期记 `approval.expired` | 03 §5.1 的事件表里没有"执行器拒绝"，不加新类型（改契约） |
+| §3.4 回滚 | 验证失败就回滚 | 回滚也走执行器，有自己的幂等键 `hash(调查, plan_hash#rollback)`；回滚不检查审批有效期、不重做前置检查 | 回滚是恢复原状，审批过期之后也必须能做 |
+| §3.4 验证 | 按验证条件轮询 | 线上按 VerifySpec 轮询，每次轮询前清掉工具调用缓存；回放只检查一次 | 回放的状态不会随时间变化，轮询只会空转到超时（测试时踩过） |
+| §3.3 CLI | `approvals approve` | `approvals list / show / approve / reject --as <名字>`；决定和审计 `approval.decided` 由 `record_decision` 写，然后从 Postgres 的 checkpoint 恢复调查 | 和设计一致；show 显示审批人要看的全部内容 |
+| 录制（UC5） | 录制文件同时保存"执行动作之后"的观测 | 场景声明 `remediation`（ADR-013）；故障台在故障状态下走一遍：build_plan → bench 审批 → 执行器核心代码执行 → 验证 → 录 post → 回滚 → 撤销故障。录制的 shell 同时需要只读凭证和执行器的写凭证（`exec-env.sh`） | 回滚必须在撤销故障之前：修复改的是集群设置，不回滚会留在集群里 |
+
 ## 可以跳过的内容
 
 第一次读可以跳过 §8（UC7）和 §9。§1 的状态机和 §3 的主路径必须读。
