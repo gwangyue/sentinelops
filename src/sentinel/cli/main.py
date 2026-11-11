@@ -169,10 +169,12 @@ def patrol(
         typer.echo(f"拒绝开始调查：{e}", err=True)
         raise typer.Exit(1) from e
     took = time.monotonic() - t0
-    if s["status"] == "healthy":
+    # 停在审批（interrupt）时图还没走到 report，状态里没有 status
+    status = "awaiting_approval" if "__interrupt__" in s else s.get("status", "?")
+    if status == "healthy":
         typer.echo(f"健康，0 个问题，用时 {took:.1f} 秒  {s['inv_id']}")
     else:
-        typer.echo(f"{s['inv_id']}  状态 {s['status']}  问题 {len(s['findings'])} 个  用时 {took:.1f} 秒")
+        typer.echo(f"{s['inv_id']}  状态 {status}  问题 {len(s.get('findings', []))} 个  用时 {took:.1f} 秒")
         typer.echo(f"查看：sentinel investigations show {s['inv_id']}")
         if s.get("approval_id") and "__interrupt__" in s:
             pl = s.get("plan") or {}
