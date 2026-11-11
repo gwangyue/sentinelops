@@ -74,7 +74,7 @@ def test_raise_watermark_bounds() -> None:
     assert A.raise_watermark_precheck(ctx({"high_pct": 94}, es_cat_allocation=alloc)).ok
     assert not A.raise_watermark_precheck(ctx({"high_pct": 93}, es_cat_allocation=alloc)).ok  # 不高于使用率：没用
     assert not A.raise_watermark_precheck(ctx({"high_pct": 96}, es_cat_allocation=alloc)).ok  # 超过洪水位
-    healthy = [{"node": "data-2", "disk.percent": "50"}]
+    healthy = [{"node": "data-2", "disk.percent": "50"}]  # 低于低水位 85%
     assert not A.raise_watermark_precheck(ctx({"high_pct": 94}, es_cat_allocation=healthy)).ok
 
 
@@ -128,11 +128,17 @@ def test_store_rejects_second_decision_and_second_result() -> None:
     assert e2.prev_hash == event_hash(e1)
 
 
-def test_raise_watermark_sets_headroom_and_rolls_back_both() -> None:
+def test_raise_watermark_sets_low_high_headrooms_and_rolls_back_all() -> None:
     alloc = [{"node": "data-2", "disk.percent": "93"}]
     pre = A.raise_watermark_precheck(ctx({"high_pct": 94}, es_cat_allocation=alloc))
+    assert pre.ok and pre.snapshot["nodes_over_low"] == ["data-2"]
     w = FakeWrite()
     A.raise_watermark_execute(ExecContext("es-target", {"high_pct": 94}, pre.snapshot, w))
     A.raise_watermark_rollback(ExecContext("es-target", {"high_pct": 94}, pre.snapshot, w))
-    assert w.calls[0][2] == {"persistent": {A.HIGH: "94%", A.HIGH_HEADROOM: "150GB"}}  # ES 9 只设 high 会 400
-    assert w.calls[1][2]["persistent"] == {A.HIGH: None, A.HIGH_HEADROOM: None}
+    # 低水位决定新分片能不能放上去；ES 9 只设水位不设 headroom 会 400
+    assert w.calls[0][2] == {
+        "persistent": {A.LOW: "94%", A.LOW_HEADROOM: "200GB", A.HIGH: "94%", A.HIGH_HEADROOM: "150GB"}
+    }
+    assert w.calls[1][2]["persistent"] == dict.fromkeys(A.WATERMARK_KEYS)
+    # 节点在低水位和高水位之间（87%）也会挡住新副本
+    assert A.raise_watermark_precheck(ctx({"high_pct": 90}, es_cat_allocation=[{"node": "d", "disk.percent": "87"}])).ok

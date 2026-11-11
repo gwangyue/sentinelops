@@ -16,9 +16,13 @@ from sentinel.sdk import ActionContext, CheckResult, ExecContext, ToolCaller, Ve
 ENABLE = "cluster.routing.allocation.enable"
 HIGH = "cluster.routing.allocation.disk.watermark.high"
 FLOOD = "cluster.routing.allocation.disk.watermark.flood_stage"
-# ES 9：显式设置 high 之后，high.max_headroom 的默认值从 150GB 变成 -1，和 low 的 200GB 冲突，ES 返回 400
-# （M3 D11 录制时实测）。所以 high 和它的 headroom 一起设，headroom 用 ES 的默认值 150GB
+LOW = "cluster.routing.allocation.disk.watermark.low"
+# ES 9：显式设置水位之后，对应的 max_headroom 默认值会从 150GB / 200GB 变成 -1，和另一个水位的默认 headroom
+# 冲突，ES 返回 400（M3 D11 录制时实测）。所以水位和它的 headroom 一起设，headroom 用 ES 的默认值
 HIGH_HEADROOM = "cluster.routing.allocation.disk.watermark.high.max_headroom"
+LOW_HEADROOM = "cluster.routing.allocation.disk.watermark.low.max_headroom"
+# 回滚要恢复的 4 项：low、high 和各自的 headroom
+WATERMARK_KEYS = (LOW, LOW_HEADROOM, HIGH, HIGH_HEADROOM)
 MAX_SHARDS = "cluster.max_shards_per_node"
 
 
@@ -79,26 +83,28 @@ def unassigned_zero_verify(ctx: ActionContext) -> VerifyResult:
 
 
 def raise_watermark_precheck(ctx: ActionContext) -> CheckResult:
+    # 决定"新分片能不能放到这个节点"的是低水位，不是高水位（高水位决定要不要把分片迁走）。
+    # 只提高高水位的话，93% 的节点仍然高于低水位 85%，新副本照样分配不上去（M3 D11 录制时实测）
     s = _raw(ctx.tools, "es.cluster_settings")
-    high, flood = setting(s, HIGH), setting(s, FLOOD)
+    low, high, flood = setting(s, LOW), setting(s, HIGH), setting(s, FLOOD)
     want = float(ctx.params["high_pct"])
     rows = _raw(ctx.tools, "es.cat_allocation")
     used = {r["node"]: float(r["disk.percent"]) for r in rows if r.get("disk.percent") not in (None, "")}
-    over = sorted(n for n, p in used.items() if p >= high)
+    over = sorted(n for n, p in used.items() if p >= low)
     snap = {
-        "before": _explicit(s, HIGH),
-        "before_headroom": _explicit(s, HIGH_HEADROOM),
+        "before": {k: _explicit(s, k) for k in WATERMARK_KEYS},
+        "low": low,
         "high": high,
         "flood": flood,
-        "nodes_over_high": over,
+        "nodes_over_low": over,
     }
     if not over:
-        return CheckResult(False, f"没有节点超过高水位 {high:g}%", snap)
-    if not high < want < flood:
-        return CheckResult(False, f"新的高水位 {want:g}% 必须在当前高水位 {high:g}% 和洪水位 {flood:g}% 之间", snap)
+        return CheckResult(False, f"没有节点超过低水位 {low:g}%", snap)
+    if not low < want < flood:
+        return CheckResult(False, f"新的水位 {want:g}% 必须在当前低水位 {low:g}% 和洪水位 {flood:g}% 之间", snap)
     if max(used[n] for n in over) >= want:
         return CheckResult(False, f"{over} 的使用率不低于 {want:g}%，提高到这个值也分配不上去", snap)
-    return CheckResult(True, f"{over} 超过高水位 {high:g}%，临时提高到 {want:g}%", snap)
+    return CheckResult(True, f"{over} 超过低水位 {low:g}%，低水位和高水位临时提高到 {want:g}%", snap)
 
 
 def raise_watermark_dry_run(ctx: ActionContext) -> dict[str, Any]:
@@ -106,17 +112,17 @@ def raise_watermark_dry_run(ctx: ActionContext) -> dict[str, Any]:
 
 
 def raise_watermark_execute(ctx: ExecContext) -> dict[str, Any]:
-    body = {HIGH: f"{float(ctx.params['high_pct']):g}%", HIGH_HEADROOM: "150GB"}
+    want = float(ctx.params["high_pct"])
+    # low ≤ high ≤ flood：低水位提高到 want；高水位不低于 want（原来更高就保持原值）
+    high = max(want, float(ctx.precheck_snapshot["high"]))
+    body = {LOW: f"{want:g}%", LOW_HEADROOM: "200GB", HIGH: f"{high:g}%", HIGH_HEADROOM: "150GB"}
     return dict(ctx.http.put("/_cluster/settings", {"persistent": body}))
 
 
 def raise_watermark_rollback(ctx: ExecContext) -> dict[str, Any]:
-    # 两项一起按原样恢复：只恢复 high 的话，留下的 headroom 显式值会改变以后的水位计算
-    snap = ctx.precheck_snapshot
-    body = {
-        scope: {HIGH: snap["before"].get(scope), HIGH_HEADROOM: snap["before_headroom"].get(scope)}
-        for scope in ("persistent", "transient")
-    }
+    # 4 项一起按原样恢复：只恢复水位的话，留下的 headroom 显式值会改变以后的水位计算
+    before = ctx.precheck_snapshot["before"]
+    body = {scope: {k: before[k].get(scope) for k in WATERMARK_KEYS} for scope in ("persistent", "transient")}
     return dict(ctx.http.put("/_cluster/settings", body))
 
 

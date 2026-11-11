@@ -57,7 +57,7 @@ def test_full_path_resolves(harness: H, tmp_path: Path) -> None:
     s = h.run("remediate")
     assert "__interrupt__" in s and s["approval_id"]  # 停在 approve 节点等人
     plan = s["plan"]
-    assert plan["plan_hash"].startswith("sha256:") and plan["precheck_snapshot"]["nodes_over_high"] == [
+    assert plan["plan_hash"].startswith("sha256:") and plan["precheck_snapshot"]["nodes_over_low"] == [
         "es-target-es-data-2"
     ]
     assert h.rem_store.get_execution  # 审批之前什么都没执行
