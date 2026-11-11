@@ -636,7 +636,11 @@ def _decide(approval_id: str, decision: Literal["approved", "rejected"], who: st
     word = "批准" if decision == "approved" else "拒绝"
     typer.echo(f"已{word} {approval_id}（方案哈希 {plan.plan_hash[:16]}…），继续调查 {plan.investigation_id}")
     out = resume_online(plan.investigation_id, Mode.LIVE)
-    typer.echo(f"{plan.investigation_id}  状态 {out.get('status')}  修复 {out.get('remediation')}")
+    # 修好之后停在 confirm（interrupt）：图还没走到 report，状态里没有 status
+    status = "awaiting_confirmation" if "__interrupt__" in out else out.get("status")
+    typer.echo(f"{plan.investigation_id}  状态 {status}  修复 {out.get('remediation')}")
+    if status == "awaiting_confirmation":
+        typer.echo(f"确认根因：sentinel investigations confirm {plan.investigation_id} --root-cause H1 --as <你的名字>")
 
 
 @approvals_app.command("approve")
