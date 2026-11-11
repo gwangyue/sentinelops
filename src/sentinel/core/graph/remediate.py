@@ -53,6 +53,7 @@ class Remediation:
     approval_ttl: timedelta = APPROVAL_TTL
     # 回放评测：录制的状态不会随时间变化，只检查一次（轮询只会空转到超时，M3 D11 测试时踩过）
     verify_once: bool = False
+    frozen: Callable[[], bool] = lambda: False  # 紧急停止（07 §7）：冻结时 plan 节点不出方案
 
 
 def catalog_text(specs: dict[str, ActionSpec]) -> str:

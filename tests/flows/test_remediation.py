@@ -120,3 +120,37 @@ def test_no_action_and_report_only_mode(harness: H, tmp_path: Path) -> None:
     h2: Harness = harness(fixture(tmp_path), with_plan(GOOD), remediate=True)
     s2 = h2.run("report_only")  # 巡检：诊断之后直接出报告，不调用 plan
     assert s2["status"] == "diagnosed" and not s2.get("plan") and not h2.rem_store.plans
+
+
+def test_freeze_blocks_plan_voids_approvals_and_executor_refuses(harness: H, tmp_path: Path) -> None:
+    from sentinel.governance.kill_switch import freeze, unfreeze
+
+    # 1. 已经在等审批时冻结：待审批作废；即使有人想批准也来不及了（决定已被 system:freeze 写成 rejected）
+    h: Harness = harness(fixture(tmp_path), with_plan(GOOD), remediate=True)
+    s = h.run("remediate")
+    voided = freeze(h.freeze_state, h.rem_store, "执行器异常", "human:ops")
+    assert voided == [s["approval_id"]]
+    out = h.resume(s["inv_id"])
+    assert out["remediation"] == "rejected" and not h.rem_store.executions
+    types = h.audit_types(s["inv_id"])
+    assert "approval.expired" in types
+    assert [e.type for e in h.store.audit_events() if e.investigation_id is None] == ["freeze.enabled"]
+    # 2. 冻结期间的新调查（另一个集群状态，避开 30 分钟去重）：照常诊断，但不出方案（07 §7）
+    h2: Harness = harness(fixture(tmp_path), with_plan(GOOD), remediate=True)
+    h2.freeze_state.set(True, "执行器异常", "human:ops")
+    s2 = h2.run("remediate")
+    assert s2["diagnosis"] and s2["remediation"] == "frozen" and "__interrupt__" not in s2
+    unfreeze(h.freeze_state, h.rem_store, "排查完毕", "human:approver")
+    assert not h.freeze_state.is_frozen()
+
+
+def test_executor_refuses_when_frozen_after_approval(harness: H, tmp_path: Path) -> None:
+    # 审批之后、执行之前冻结：执行器自己读冻结状态，拒绝执行
+    h: Harness = harness(fixture(tmp_path), with_plan(GOOD), remediate=True)
+    s = h.run("remediate")
+    approve(h)
+    h.freeze_state.set(True, "测试", "human:ops")
+    out = h.resume(s["inv_id"])
+    assert out["remediation"] == "exec_precheck_failed" and not h.rem_store.executions
+    ev = [e for e in h.store.audit_events(s["inv_id"]) if e.type == "action.precheck_failed"]
+    assert ev and ev[0].payload["stage"] == "frozen"

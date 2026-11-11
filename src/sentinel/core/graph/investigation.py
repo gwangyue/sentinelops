@@ -260,6 +260,10 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
     def plan(state: InvState) -> InvState:
         assert deps.remediation is not None
         pack = deps.packs[state["pack"]]
+        if deps.remediation.frozen():
+            # 07 §7：冻结之后照常诊断，但不进入方案环节
+            audit(state, "plan.proposed", {"action": None, "reason": "frozen"})
+            return {"remediation": "frozen"}
         d = Diagnosis.model_validate(state["diagnosis"])
         msg = deps.make_model("diagnosis").invoke(
             plan_prompt_message(pack.actions, d),

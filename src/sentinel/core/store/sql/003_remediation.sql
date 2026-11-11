@@ -40,3 +40,12 @@ CREATE TABLE IF NOT EXISTS executions (
     body            jsonb NOT NULL,             -- ExecutionResult
     created_at      timestamptz NOT NULL DEFAULT now()
 );
+
+-- 紧急停止（07 §7）：只追加，最新一行决定当前状态。执行器每次执行前都读，不依赖 agent-api 是否正常
+CREATE TABLE IF NOT EXISTS freeze_events (
+    seq    bigserial PRIMARY KEY,
+    frozen boolean NOT NULL,
+    reason text NOT NULL,
+    actor  text NOT NULL,
+    ts     timestamptz NOT NULL DEFAULT now()
+);

@@ -11,6 +11,7 @@ import time
 
 from sentinel.exec.core import live_runner, process
 from sentinel.exec.live import ExecTools, WriteHttpClient, load_specs, manifest, write_connection
+from sentinel.governance.kill_switch import PgFreezeState
 from sentinel.governance.remediation_store import PgRemediationStore
 from sentinel.sdk import ReadOnlyHttp
 
@@ -28,6 +29,7 @@ def main() -> int:
         os.environ.get("SENTINEL_PG_URL", "postgresql://postgres:sentinel-local@localhost:5432/sentinel")
     )
     run = live_runner(lambda: WriteHttpClient(url, user, pw))
+    freeze_state = PgFreezeState(store.url)
     print(f"执行器已启动：{a.pack}，{len(specs)} 个动作，轮询间隔 {a.poll}s", flush=True)
     while True:
         req = store.claim_execution_request()
@@ -38,7 +40,7 @@ def main() -> int:
             continue
         read = ReadOnlyHttp(url, user, pw)
         try:
-            r = process(req, store, specs, ExecTools(m, read), run)
+            r = process(req, store, specs, ExecTools(m, read), run, frozen=freeze_state.is_frozen)
         finally:
             read.close()
         print(f"{req.kind} {req.plan_id} → {r.status} {r.output}", flush=True)

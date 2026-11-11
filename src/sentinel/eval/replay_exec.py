@@ -19,7 +19,10 @@ SIM_APPROVER = "sim:eval"
 
 
 def replay_remediation(
-    store: MemoryRemediationStore, specs: dict[str, ActionSpec], backend_for: Callable[[str], ToolBackend]
+    store: MemoryRemediationStore,
+    specs: dict[str, ActionSpec],
+    backend_for: Callable[[str], ToolBackend],
+    frozen: Callable[[], bool] = lambda: False,
 ) -> Remediation:
     """backend_for(调查 ID) → 这次调查的回放后端（和诊断用的是同一个，切到 post 之后验证读到的就是执行之后的录制）。"""
 
@@ -27,9 +30,11 @@ def replay_remediation(
         plan = store.get_plan(plan_id)
         assert plan is not None
         b = backend_for(plan.investigation_id)
-        return process(ExecRequest(0, kind, plan_id, approval_id, key), store, specs, b, replay_runner(b.enter_post))
+        return process(
+            ExecRequest(0, kind, plan_id, approval_id, key), store, specs, b, replay_runner(b.enter_post), frozen=frozen
+        )
 
-    return Remediation(store=store, executor=executor, verify_once=True)
+    return Remediation(store=store, executor=executor, verify_once=True, frozen=frozen)
 
 
 def approve_all(store: MemoryRemediationStore) -> list[str]:

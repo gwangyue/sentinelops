@@ -33,6 +33,8 @@ app.add_typer(dataset_app, name="dataset")
 app.add_typer(eval_app, name="eval")
 approvals_app = typer.Typer(no_args_is_help=True, help="审批（03 §4.4；02 §3.4：审批不经过 LLM）")
 app.add_typer(approvals_app, name="approvals")
+audit_app = typer.Typer(no_args_is_help=True, help="审计（07 §5）")
+app.add_typer(audit_app, name="audit")
 
 # 观测记录的原始输出放在仓库根目录的 var/ 下（已加入 .gitignore）
 OBS_ROOT = Path("var/observations")
@@ -494,6 +496,89 @@ def _rem_store() -> "PgRemediationStore":
     from sentinel.governance.remediation_store import PgRemediationStore
 
     return PgRemediationStore(PG_URL)
+
+
+ANCHORS = Path("var/audit/anchors.log")  # 只追加的本地锚定文件（07 §5：作品项目只做本地，云上可以放 S3 对象锁）
+
+
+def _since(spec: str):  # type: ignore[no-untyped-def]
+    from datetime import UTC, datetime, timedelta
+
+    unit = {"d": "days", "h": "hours", "m": "minutes"}[spec[-1]]
+    return datetime.now(UTC) - timedelta(**{unit: int(spec[:-1])})
+
+
+def _read_anchors() -> list[tuple[str, str]]:
+    if not ANCHORS.exists():
+        return []
+    return [tuple(x.split()[1:3]) for x in ANCHORS.read_text(encoding="utf-8").splitlines() if x]  # type: ignore[misc]
+
+
+@audit_app.command("verify")
+def audit_verify(
+    since: Annotated[str, typer.Option(help="校验窗口，例如 1d、12h；窗口之前的那一条作为起点")] = "7d",
+) -> None:
+    """重新计算审计哈希链，报告第一个断点；同时核对外部锚定（07 §5）。有问题时退出码为 1。"""
+    from sentinel.core.store import open_store
+    from sentinel.governance.audit import verify_anchors, verify_chain
+
+    events = open_store().audit_events()  # 按 seq 排好。TODO(edge)：规模变大后按窗口查询
+    start = _since(since)
+    i = next((k for k, e in enumerate(events) if e.ts >= start), len(events))
+    window = events[i:]
+    problems = verify_chain(window, events[i - 1] if i > 0 else None) + verify_anchors(events, _read_anchors())
+    typer.echo(f"审计链：窗口内 {len(window)} 条（共 {len(events)} 条），锚定 {len(_read_anchors())} 个")
+    if problems:
+        typer.echo(f"第一个断点：{problems[0]}", err=True)
+        for p in problems[1:5]:
+            typer.echo(f"  {p}", err=True)
+        raise typer.Exit(1)
+    typer.echo("完整：每条事件的 prev_hash 都等于上一条重算的哈希；锚定一致")
+
+
+@audit_app.command("anchor")
+def audit_anchor() -> None:
+    """把最后一条审计事件的哈希追加到本地锚定文件（07 §5，建议每天一次）。"""
+    from datetime import UTC, datetime
+
+    from sentinel.core.store import open_store
+    from sentinel.governance.audit import event_hash
+
+    events = open_store().audit_events()
+    if not events:
+        raise typer.BadParameter("还没有审计事件")
+    last = events[-1]
+    ANCHORS.parent.mkdir(parents=True, exist_ok=True)
+    with ANCHORS.open("a", encoding="utf-8") as f:
+        f.write(f"{datetime.now(UTC).isoformat()} {last.id} {event_hash(last)}\n")
+    typer.echo(f"已锚定 {last.id}（{event_hash(last)[:16]}…）→ {ANCHORS}")
+
+
+@app.command("freeze")
+def kill_freeze(
+    reason: Annotated[str, typer.Option(help="为什么冻结（写进审计）")],
+    who: Annotated[str, typer.Option("--as", help="操作人")],
+) -> None:
+    """紧急停止（07 §7）：执行器拒绝所有动作；待审批的全部作废；诊断照常，但不出修复方案。"""
+    from sentinel.core.graph.run import PG_URL
+    from sentinel.governance.kill_switch import PgFreezeState, freeze
+
+    voided = freeze(PgFreezeState(PG_URL), _rem_store(), reason, f"human:{who}")
+    typer.echo(f"已冻结（{reason}）：执行器拒绝所有动作；作废待审批 {len(voided)} 个 {' '.join(voided)}")
+    typer.echo("解冻：sentinel unfreeze --reason ... --as <审批人>")
+
+
+@app.command("unfreeze")
+def kill_unfreeze(
+    reason: Annotated[str, typer.Option(help="为什么解冻（写进审计）")],
+    who: Annotated[str, typer.Option("--as", help="审批人（07 §7：解冻需要审批人角色）")],
+) -> None:
+    """解除紧急停止。被冻结作废的审批不会恢复，需要重新发起调查。"""
+    from sentinel.core.graph.run import PG_URL
+    from sentinel.governance.kill_switch import PgFreezeState, unfreeze
+
+    unfreeze(PgFreezeState(PG_URL), _rem_store(), reason, f"human:{who}")
+    typer.echo(f"已解冻（{reason}）")
 
 
 @approvals_app.command("list")

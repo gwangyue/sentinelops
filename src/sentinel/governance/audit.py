@@ -1,7 +1,8 @@
 """审计哈希链（03 §5.1；07 §5）：调查引擎和执行器都往同一条链上写。
 
-负责：一条事件的哈希怎么算（event_hash）、Postgres 上怎么在一个事务里追加（pg_append）。
-不负责：哈希链的校验命令（audit verify，M3 D12）。
+负责：一条事件的哈希怎么算（event_hash）、Postgres 上怎么在一个事务里追加（pg_append）、
+      整条链和外部锚定的校验（verify_chain / verify_anchors，`sentinel audit verify`，M3 D12）。
+不负责：Postgres 账号只授予 INSERT（TODO(edge)：compose 和 kind 上应用账号现在是超级用户，07 §5 的第一条还没做）。
 放在 governance 而不是 core/store：执行器不能依赖 core（ADR-005），但它的 action.executed 也要进同一条链。
 """
 
@@ -60,3 +61,29 @@ def pg_append(c: psycopg.Connection[dict[str, Any]], **kw: Any) -> AuditEvent:
         (e.id, e.ts, e.investigation_id, e.agent_version, e.actor, e.type, json.dumps(e.payload), e.prev_hash),
     )
     return e
+
+
+def verify_chain(events: list[AuditEvent], prev: AuditEvent | None = None) -> list[str]:
+    """重新计算整条链（07 §5），返回问题列表（空 = 完整）。events 按 seq 排好；prev 是窗口之前的那一条
+    （--since 时传入），没有就从创世哈希开始。改动或删除中间的记录，下一条的 prev_hash 就对不上。"""
+    problems = []
+    expected = event_hash(prev) if prev else GENESIS_HASH
+    for e in events:
+        if e.prev_hash != expected:
+            problems.append(f"{e.id}（{e.ts.isoformat()} {e.type}）：prev_hash 对不上，它前面的记录被改动或删除过")
+        expected = event_hash(e)
+    return problems
+
+
+def verify_anchors(events: list[AuditEvent], anchors: list[tuple[str, str]]) -> list[str]:
+    """外部锚定（07 §5）：锚定文件里记的 (事件 ID, 哈希) 必须和现在重算的一致。
+    防的是"整条链被重新计算一遍"——链本身查不出来，锚定在库外，改不了。"""
+    by_id = {e.id: e for e in events}
+    out = []
+    for eid, h in anchors:
+        e = by_id.get(eid)
+        if e is None:
+            out.append(f"锚定的事件 {eid} 不见了")
+        elif event_hash(e) != h:
+            out.append(f"锚定的事件 {eid} 的哈希变了：整条链可能被重新计算过")
+    return out

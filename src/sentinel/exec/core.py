@@ -1,6 +1,7 @@
 """执行器的核心流程（03 §4.4；02 §3.4；ADR-005）：真实执行器和回放模拟器共用同一段校验。
 
 负责：拿到 (plan_id, approval_id, idempotency_key) 之后，按顺序做——
+  0. 系统冻结（07 §7）就拒绝；
   1. 从存储读出方案和审批请求，重算 plan_hash，三处（方案、审批请求、重算值）必须一致；
   2. 审批的决定是 approved，并且执行时没有过期（回滚不检查过期：回滚是恢复原状）；
   3. 幂等键必须等于 hash(调查 ID, plan_hash)；已经有结果就直接返回 duplicate，不再执行；
@@ -49,6 +50,7 @@ def process(
     tools: ToolCaller,
     run_action: RunAction,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    frozen: Callable[[], bool] = lambda: False,
 ) -> ExecutionResult:
     plan = store.get_plan(req.plan_id)
     apv = store.get_approval_request(req.approval_id)
@@ -59,6 +61,9 @@ def process(
         store.append_audit(investigation_id=inv, actor=ACTOR, type=event, payload={"plan_id": req.plan_id, **r.output})
         return r
 
+    # 0. 紧急停止（07 §7）：每次执行前都读冻结状态，冻结时什么都不做（回滚也不做：冻结就是要人接手）
+    if frozen():
+        return refuse("action.precheck_failed", "frozen", "系统已冻结（sentinel freeze），拒绝所有动作")
     # 1. 方案和审批请求都在，并且哈希三处一致
     if plan is None or apv is None or apv.plan_id != plan.id:
         return refuse("action.precheck_failed", "approval", "方案或审批请求不存在，或者两者不匹配")

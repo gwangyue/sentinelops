@@ -142,3 +142,23 @@ def test_raise_watermark_sets_low_high_headrooms_and_rolls_back_all() -> None:
     assert w.calls[1][2]["persistent"] == dict.fromkeys(A.WATERMARK_KEYS)
     # 节点在低水位和高水位之间（87%）也会挡住新副本
     assert A.raise_watermark_precheck(ctx({"high_pct": 90}, es_cat_allocation=[{"node": "d", "disk.percent": "87"}])).ok
+
+
+def test_audit_chain_detects_tamper_delete_and_recompute() -> None:
+    from sentinel.core.store import MemoryStore
+    from sentinel.governance.audit import event_hash, verify_anchors, verify_chain
+
+    st = MemoryStore()
+    for i in range(5):
+        st.append_audit(investigation_id="inv", agent_version=None, actor="agent", type=f"t{i}", payload={"i": i})
+    ev = st.audit_events()
+    assert verify_chain(ev) == [] and verify_chain(ev[2:], ev[1]) == []  # --since：从窗口前一条接上
+    tampered = [*ev[:2], ev[2].model_copy(update={"payload": {"i": 99}}), *ev[3:]]
+    assert verify_chain(tampered)[0].startswith(ev[3].id)  # 改了第 3 条，第 4 条的链接对不上
+    deleted = [*ev[:2], *ev[3:]]
+    assert verify_chain(deleted)[0].startswith(ev[3].id)
+    anchors = [(ev[-1].id, event_hash(ev[-1]))]
+    assert verify_anchors(ev, anchors) == []
+    # 最后一条被改、整条链又被重算一遍：链本身查不出来，锚定能查出来
+    last = ev[-1].model_copy(update={"payload": {"i": -1}})
+    assert verify_chain([*ev[:-1], last]) == [] and verify_anchors([*ev[:-1], last], anchors)

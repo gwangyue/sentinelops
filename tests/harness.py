@@ -23,6 +23,7 @@ from sentinel.core.toolbackend import Mode, ToolBackend
 from sentinel.core.versioning.components import collect_components, load_context_policy
 from sentinel.core.versioning.freeze import freeze, require_frozen
 from sentinel.eval.replay_exec import replay_remediation
+from sentinel.governance.kill_switch import MemoryFreezeState
 from sentinel.governance.remediation_store import MemoryRemediationStore
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "es"
@@ -56,6 +57,7 @@ class Harness:
 
         # 修复段：内存里的修复存储 + 回放执行器（和评测同一套组装，eval/replay_exec.py）
         self.rem_store = MemoryRemediationStore(audit_sink=self.store.append_audit)  # 和线上一样，同一条审计链
+        self.freeze_state = MemoryFreezeState()  # 紧急停止（07 §7）
         self.saver = InMemorySaver()  # run 和 resume 共用：interrupt 之后要能找回同一个线程的状态
 
         self.deps = Deps(
@@ -70,7 +72,7 @@ class Harness:
         )
         if remediate:
             self.deps.remediation = replay_remediation(
-                self.rem_store, PACK.actions, lambda inv: self.deps.backend(PACK, inv)
+                self.rem_store, PACK.actions, lambda inv: self.deps.backend(PACK, inv), self.freeze_state.is_frozen
             )
 
     def run(self, mode: str = "report_only") -> InvState:

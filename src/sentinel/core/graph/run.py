@@ -39,6 +39,7 @@ from sentinel.core.store import Store, open_store
 from sentinel.core.toolbackend import Mode, ToolBackend, open_backend
 from sentinel.core.versioning.components import behavior_dirty, collect_components, load_context_policy
 from sentinel.core.versioning.freeze import require_frozen
+from sentinel.governance.kill_switch import PgFreezeState
 from sentinel.governance.remediation_store import ExecKind, PgRemediationStore, RemediationStore
 
 OBS_ROOT = Path(os.environ.get("SENTINEL_OBS_ROOT", "var/observations"))
@@ -172,7 +173,7 @@ def _online_deps(mode: Mode, fixture: Path | None) -> Deps:
         mode,
         fixture,
         version=lambda: current_version(store),
-        remediation=Remediation(store=rem, executor=queue_executor(rem)),
+        remediation=Remediation(store=rem, executor=queue_executor(rem), frozen=PgFreezeState(PG_URL).is_frozen),
     )
 
 
