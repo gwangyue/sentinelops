@@ -606,7 +606,8 @@ def approvals_show(approval_id: str) -> None:
     plan = st.get_plan(r.plan_id) if r else None
     if r is None or plan is None:
         raise typer.BadParameter(f"没有审批请求 {approval_id}")
-    spec = load_pack("es").actions[plan.action_id]
+    # 动作 ID 的前缀就是专家包名（<pack>.<动词_宾语>，03 §2）
+    spec = load_pack(plan.action_id.split(".", 1)[0]).actions[plan.action_id]
     d = st.get_decision(r.id)
     typer.echo(f"审批 {r.id}   调查 {plan.investigation_id}   状态 {d.decision if d else 'pending'}")
     typer.echo(f"  动作      {plan.action_id}（风险：{spec.risk}，依据 {plan.rationale_hypothesis}）")
@@ -770,7 +771,8 @@ def inv_confirm(
                 hypothesis=root_cause,
                 label=label,
                 who=f"human:{who}",
-                valid_labels=[r.label for r in load_pack("es").manifest.root_causes],
+                # 合法标签取这次调查所属的专家包（问题事件里记着 pack）
+                valid_labels=[r.label for r in load_pack(rec.findings[0]["pack"]).manifest.root_causes],
             )
         except ValueError as err:
             raise typer.BadParameter(str(err)) from err
