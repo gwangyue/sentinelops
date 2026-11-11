@@ -24,6 +24,7 @@ EXPECTED = {
     ("audit", "anchor"),
     ("freeze",),
     ("report", "weekly"),
+    ("mcp", "serve"),
     ("unfreeze",),
     ("approvals", "show"),
     ("approvals", "approve"),

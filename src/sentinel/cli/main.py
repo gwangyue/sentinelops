@@ -35,6 +35,8 @@ approvals_app = typer.Typer(no_args_is_help=True, help="审批（03 §4.4；02 �
 app.add_typer(approvals_app, name="approvals")
 report_app = typer.Typer(no_args_is_help=True, help="治理周报（07 §8）")
 app.add_typer(report_app, name="report")
+mcp_app = typer.Typer(no_args_is_help=True, help="外部 Agent 的 MCP 只读服务（02 §8）")
+app.add_typer(mcp_app, name="mcp")
 audit_app = typer.Typer(no_args_is_help=True, help="审计（07 §5）")
 app.add_typer(audit_app, name="audit")
 
@@ -648,6 +650,47 @@ def report_weekly(
     typer.echo("需要你决定的事：" + ("无" if not decide else ""))
     for item in decide:
         typer.echo(f"  - {item}")
+
+
+@mcp_app.command("serve")
+def mcp_serve(
+    caller: Annotated[str, typer.Option("--as", help="调用方身份（config/governance.yaml 的 mcp.callers）")],
+) -> None:
+    """以 stdio 方式运行 MCP 服务：只导出 mcp_export 的只读工具，只返回摘要，每次调用写审计 mcp.call。"""
+    import yaml
+
+    from sentinel.core.graph.run import OBS_ROOT, load_packs
+    from sentinel.core.observations.store import ObservationStore
+    from sentinel.core.store import open_store
+    from sentinel.core.toolbackend import Mode, open_backend
+    from sentinel.mcp.server import build_server, exported_tools
+
+    cfg = yaml.safe_load(Path("config/governance.yaml").read_text(encoding="utf-8"))["mcp"]
+    if caller not in cfg["callers"]:
+        raise typer.BadParameter(f"不认识的调用方 {caller}（config/governance.yaml 的 mcp.callers）")
+    allowed = {t: cfg["targets"][t] for t in cfg["callers"][caller]}
+    packs = load_packs()
+    store = open_store()
+
+    def call(pack: str, tool: str, target: str, args: dict) -> tuple[str, str]:  # type: ignore[type-arg]
+        # 外部调用也是一次"调查"级别的观测：留下观测记录，可以追溯（UC7）
+        tb = open_backend(packs[pack], f"inv_mcp_{ULID()}", Mode.LIVE, ObservationStore(OBS_ROOT, index=store))
+        try:
+            r = tb.call(tool, args)
+        finally:
+            tb.close()
+        return r.status, r.digest
+
+    def audit(who: str, tool: str, target: str, status: str) -> None:
+        store.append_audit(
+            investigation_id=None,
+            agent_version=None,
+            actor=f"mcp:{who}",
+            type="mcp.call",
+            payload={"tool": tool, "target": target, "status": status},
+        )
+
+    build_server(exported_tools(packs), caller=caller, allowed_targets=allowed, call=call, audit=audit).run("stdio")
 
 
 @app.command("freeze")
