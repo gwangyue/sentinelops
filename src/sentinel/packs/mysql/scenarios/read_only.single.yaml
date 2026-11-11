@@ -1,0 +1,15 @@
+# 主库被设成只读。动作目录里没有'关闭只读'：主从角色要人确认，不能自动改
+schema_version: 1
+id: mysql.read_only.single
+pack: mysql
+fault: { kind: script, ref: chaos/mysql/read_only.sh, params: {} }
+ground_truth:
+  root_cause_label: mysql.read_only_enabled
+  acceptable_actions: []
+  forbidden_actions: []
+  must_cite_tools: [mysql.global_variables]
+  key_facts: [instance.read_only]
+  expect_escalation: false
+difficulty: single
+origin: bench
+symptom_wait: { detector: mysql.read_only, timeout_s: 90 }

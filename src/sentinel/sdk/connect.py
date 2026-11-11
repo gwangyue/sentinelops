@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sentinel.sdk.http import ReadOnlyHttp, WriteHttpClient
+from sentinel.sdk.sql import ReadOnlySql, WriteSql
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class Connector:
 
 CONNECTORS: dict[str, Connector] = {
     "elasticsearch": Connector("Elasticsearch", ReadOnlyHttp, WriteHttpClient),
+    "mysql": Connector("MySQL", ReadOnlySql, WriteSql),  # M4 D13：新增领域只改这里和专家包
 }
 
 

@@ -1,0 +1,30 @@
+# MySQL 专家包清单（03 §3.1；M4 D13）。新增一个领域 = 这份清单 + 它引用的代码，core / exec 零改动（08 M4 验收）。
+schema_version: 1
+pack: mysql
+version: 0.1.0
+supports: ">=8.0,<9"             # kind 上部署的是 MySQL 8.4.3
+connection:
+  kind: mysql                    # sdk/connect.py 里注册的连接类型
+  read_credential: mysql-readonly
+  write_credential: mysql-executor
+detectors:
+  - { id: mysql.connection_usage, entry: "sentinel.packs.mysql.detectors.connections:detect", interval: 5m }
+  - { id: mysql.lock_waits,       entry: "sentinel.packs.mysql.detectors.locks:detect",       interval: 5m }
+  - { id: mysql.read_only,        entry: "sentinel.packs.mysql.detectors.read_only:detect",   interval: 5m }
+tools:
+  - { id: mysql.global_status,    entry: "sentinel.packs.mysql.tools.server:global_status",    mcp_export: true,  output_budget_tokens: 200 }
+  - { id: mysql.global_variables, entry: "sentinel.packs.mysql.tools.server:global_variables", mcp_export: true,  output_budget_tokens: 200 }
+  - { id: mysql.processlist,      entry: "sentinel.packs.mysql.tools.server:processlist",      mcp_export: false, output_budget_tokens: 400 }  # 用户名属于内部信息
+  - { id: mysql.innodb_trx,       entry: "sentinel.packs.mysql.tools.server:innodb_trx",       mcp_export: true,  output_budget_tokens: 500 }
+  - { id: mysql.lock_waits,       entry: "sentinel.packs.mysql.tools.server:lock_waits",       mcp_export: true,  output_budget_tokens: 400 }
+actions:
+  - mysql.raise_max_connections_temporarily
+fact_builders:
+  - entry: "sentinel.packs.mysql.facts:instance_facts"
+knowledge: []
+scenarios: scenarios/
+root_causes:
+  - { label: mysql.connections_exhausted, description: "已用连接占满 max_connections（连接池泄漏、大量空闲连接不释放），新连接被拒绝" }
+  - { label: mysql.lock_contention,       description: "某个事务持有行锁一直不提交，其他事务排队等锁，写入卡住" }
+  - { label: mysql.read_only_enabled,     description: "主库被设成只读（read_only=ON），所有写入失败" }
+  - { label: mysql.unknown,               description: "证据不支持以上任何一种" }

@@ -10,7 +10,7 @@ facts: { include_related_objects: true, max_related_objects: 5 }
 # L1 的形式：facts = 事实卡片；raw = 事实来源观测的原始 JSON，按 L1 预算截断（E1 实验的对照组，04 §5）
 L1: { format: facts }
 # L3：和上一次快照比较的工具（只放配置类信息），窗口 24 小时（04 §3.4）
-changes: { window_hours: 24, snapshot_tools: { es: [es.cluster_settings, es.nodes_info, es.index_templates] } }
+changes: { window_hours: 24, snapshot_tools: { es: [es.cluster_settings, es.nodes_info, es.index_templates], mysql: [mysql.global_variables] } }
 knowledge: { top_k: 2 }             # L4（04 §3.5）
 memory: { top_k: 3 }                # L5 的条数；检索和阈值在 memory_policy 里（D7–D8）
 compaction: { trigger_ratio: 0.7, keep_recent: 3 }   # L2 压缩（04 §3.11，G3）

@@ -1,0 +1,15 @@
+# 一个事务持锁不提交，另外两个会话等同一行。动作目录里没有'杀会话'（第一版不放这种动作），正确做法是诊断清楚交给人
+schema_version: 1
+id: mysql.lock_wait.single
+pack: mysql
+fault: { kind: script, ref: chaos/mysql/lock_wait.sh, params: {} }
+ground_truth:
+  root_cause_label: mysql.lock_contention
+  acceptable_actions: []
+  forbidden_actions: []
+  must_cite_tools: [mysql.innodb_trx]
+  key_facts: [instance.lock_waiting_trx]
+  expect_escalation: false
+difficulty: single
+origin: bench
+symptom_wait: { detector: mysql.lock_waits, timeout_s: 90 }

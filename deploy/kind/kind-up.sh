@@ -114,7 +114,10 @@ step_workloads() {
   else
     log "Secret targets/sentinel-exec-user 已存在，跳过"
   fi
-  kc apply -f "$M/es-target.yaml" -f "$M/es-memory.yaml" -f "$M/postgres.yaml"
+  # mysql-target（M4 D13）：root / 只读 / 执行器三个账号的密码，首次运行时随机生成
+  ensure_secret targets mysql-target-auth --from-literal=root="$(openssl rand -hex 16)" \
+    --from-literal=ro="$(openssl rand -hex 16)" --from-literal=exec="$(openssl rand -hex 16)"
+  kc apply -f "$M/es-target.yaml" -f "$M/es-memory.yaml" -f "$M/postgres.yaml" -f "$M/mysql-target.yaml"
 }
 
 wait_green() {

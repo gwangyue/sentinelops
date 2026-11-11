@@ -20,6 +20,7 @@ dependencies = [
     "langsmith>=0.14.12",
     "matplotlib>=3.11.2",
     "jsonschema>=4.26.0",
+    "pymysql>=1.2.3",
 ]
 
 [project.scripts]
@@ -34,6 +35,7 @@ dev = [
     "pytest-socket>=0.7",
     "import-linter>=2.1",
     "types-jsonschema>=4.26.0.20261006",
+    "types-pymysql>=1.2.0.20260923",
 ]
 
 [build-system]

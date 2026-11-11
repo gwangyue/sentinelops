@@ -1,0 +1,5 @@
+# 环境记忆（05 §2）：由人维护。role=primary：这台应该可写，read_only=ON 就是问题
+role: primary
+importance: high
+maintenance_window: null
+known_issues: []

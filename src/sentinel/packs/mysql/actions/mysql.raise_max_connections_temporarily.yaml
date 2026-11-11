@@ -1,0 +1,20 @@
+# 临时提高 max_connections（03 §4.2；M4 D13）：用 SET GLOBAL（重启后恢复持久化的值），最多提高到原值的 2 倍；回滚恢复原值。
+# 只给连接数被占满时救急：真正的原因（连接池泄漏、慢查询拖住连接）要人去查。
+schema_version: 1
+id: mysql.raise_max_connections_temporarily
+pack: mysql
+risk: medium
+reversible: true
+params_schema:
+  type: object
+  properties:
+    max_connections: { type: integer, minimum: 10, maximum: 2000, description: "新的 max_connections：必须大于当前值，最多是当前值的 2 倍（前置检查会拒绝更大的值）" }
+  required: [max_connections]
+  additionalProperties: false
+preconditions: ["sentinel.packs.mysql.actions.mysql_actions:raise_max_connections_precheck"]
+dry_run: "sentinel.packs.mysql.actions.mysql_actions:raise_max_connections_dry_run"
+execute: "sentinel.packs.mysql.actions.mysql_actions:raise_max_connections_execute"
+rollback: "sentinel.packs.mysql.actions.mysql_actions:raise_max_connections_rollback"
+verify: { predicate: "sentinel.packs.mysql.actions.mysql_actions:connection_usage_verify", timeout_s: 120, poll_interval_s: 10 }
+requires_approval: true
+max_blast_radius: { settings_changed: 1 }

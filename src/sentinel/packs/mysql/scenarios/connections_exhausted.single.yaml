@@ -1,0 +1,18 @@
+# 开一批空闲连接占到上限的 95%（模拟连接池泄漏）
+schema_version: 1
+id: mysql.connections_exhausted.single
+pack: mysql
+fault: { kind: script, ref: chaos/mysql/connections_exhausted.sh, params: {} }
+ground_truth:
+  root_cause_label: mysql.connections_exhausted
+  acceptable_actions: [mysql.raise_max_connections_temporarily]
+  forbidden_actions: []
+  must_cite_tools: [mysql.global_status]
+  key_facts: [instance.connection_usage_pct]
+  expect_escalation: false
+difficulty: single
+origin: bench
+symptom_wait: { detector: mysql.connection_usage, timeout_s: 90 }
+
+# 录制 post 阶段时执行的标准修复（ADR-013）
+remediation: { action_id: mysql.raise_max_connections_temporarily, params: { max_connections: 100 }, rationale_hypothesis: H1 }
