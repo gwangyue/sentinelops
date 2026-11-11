@@ -1,0 +1,18 @@
+# 临时提高每个节点的分片上限（03 §4.2）：最多到原值的 2 倍、不超过 ES 默认值 1000；回滚恢复原值。
+schema_version: 1
+id: es.raise_shard_limit_temporarily
+pack: es
+risk: medium
+reversible: true
+params_schema:
+  type: object
+  properties: { max_shards_per_node: { type: integer, minimum: 1, maximum: 1000 } }
+  required: [max_shards_per_node]
+  additionalProperties: false
+preconditions: ["sentinel.packs.es.actions.es_actions:shard_limit_precheck"]
+dry_run: "sentinel.packs.es.actions.es_actions:shard_limit_dry_run"
+execute: "sentinel.packs.es.actions.es_actions:shard_limit_execute"
+rollback: "sentinel.packs.es.actions.es_actions:shard_limit_rollback"
+verify: { predicate: "sentinel.packs.es.actions.es_actions:shard_limit_verify", timeout_s: 120, poll_interval_s: 10 }
+requires_approval: true
+max_blast_radius: { settings_changed: 1 }

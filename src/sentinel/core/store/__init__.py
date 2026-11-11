@@ -2,8 +2,11 @@
 
 import os
 
-from sentinel.core.store.base import GENESIS_HASH, InvestigationRecord, Store, event_hash
+from sentinel.core.store.base import InvestigationRecord, Store
 from sentinel.core.store.memory import MemoryStore
+
+# 哈希链的规则在 governance（执行器也写同一条链，它不能依赖 core）；这里重新导出，原来的调用方不用改
+from sentinel.governance.audit import GENESIS_HASH, event_hash
 
 
 def open_store() -> Store:

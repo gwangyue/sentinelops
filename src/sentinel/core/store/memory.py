@@ -1,13 +1,12 @@
 """内存实现：只给测试用（测试禁用网络，连不上 Postgres）。行为和 PgStore 保持一致。"""
 
 import dataclasses
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
-from ulid import ULID
-
 from sentinel.contracts import AgentVersion, AuditEvent, Observation
-from sentinel.core.store.base import GENESIS_HASH, InvestigationRecord, event_hash
+from sentinel.core.store.base import InvestigationRecord
+from sentinel.governance.audit import new_event
 
 
 class MemoryStore:
@@ -50,16 +49,13 @@ class MemoryStore:
         type: str,
         payload: dict[str, Any],
     ) -> AuditEvent:
-        prev = event_hash(self.audit[-1]) if self.audit else GENESIS_HASH
-        e = AuditEvent(
-            id=f"aud_{ULID()}",
-            ts=datetime.now(UTC),
+        e = new_event(
+            self.audit[-1] if self.audit else None,
             investigation_id=investigation_id,
             agent_version=agent_version,
             actor=actor,
             type=type,
             payload=payload,
-            prev_hash=prev,
         )
         self.audit.append(e)
         return e

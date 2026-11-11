@@ -6,7 +6,7 @@ supports: ">=9.0,<10"            # S1 实测：ECK 3.5.0 部署 ES 9.5.3
 connection:
   kind: elasticsearch
   read_credential: es-readonly   # 运行时解析为环境变量 SENTINEL_CRED_ES_READONLY_{URL,USER,PASSWORD}
-  # write_credential 在 M3 执行器上线时加
+  write_credential: es-executor  # 只有执行器进程能解析（ADR-005）；角色权限见 deploy/es/executor_role.sh
 detectors:
   - { id: es.unassigned_shards, entry: "sentinel.packs.es.detectors.unassigned:detect", interval: 15m }
   - { id: es.disk_watermark,    entry: "sentinel.packs.es.detectors.disk:detect",       interval: 15m }
@@ -27,7 +27,12 @@ tools:
   - { id: es.cat_indices,        entry: "sentinel.packs.es.tools.indices:cat_indices",       mcp_export: true,  output_budget_tokens: 600 }
   - { id: es.cat_recovery,       entry: "sentinel.packs.es.tools.indices:cat_recovery",      mcp_export: true,  output_budget_tokens: 400 }
   - { id: es.tasks,              entry: "sentinel.packs.es.tools.tasks:tasks",               mcp_export: false, output_budget_tokens: 400 }  # 任务描述可能含用户内容
-actions: []                      # 动作目录在 M3 加
+actions:                         # 动作目录（03 §4.2），规格在 actions/<动作 ID>.yaml；执行和回滚函数只在执行器里加载
+  - es.enable_allocation
+  - es.raise_watermark_temporarily
+  - es.relocate_shards
+  - es.raise_shard_limit_temporarily
+  - es.set_replicas
 fact_builders:
   - entry: "sentinel.packs.es.facts:cluster_facts"
 knowledge:                       # runbook（04 §3.5），按 Elastic 官方文档编写，每篇文件头注明出处

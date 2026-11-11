@@ -19,6 +19,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.3.6",
     "langsmith>=0.14.12",
     "matplotlib>=3.11.2",
+    "jsonschema>=4.26.0",
 ]
 
 [project.scripts]

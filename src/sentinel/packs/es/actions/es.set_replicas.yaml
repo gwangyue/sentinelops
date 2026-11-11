@@ -1,0 +1,20 @@
+# 修改一个索引的副本数（03 §4.2）：副本数超过“数据节点数 − 1”时多出来的副本永远无法分配；回滚恢复原副本数。
+schema_version: 1
+id: es.set_replicas
+pack: es
+risk: low
+reversible: true
+params_schema:
+  type: object
+  properties:
+    index: { type: string, minLength: 1, maxLength: 255, pattern: "^[a-z0-9][a-z0-9._-]*$" }
+    replicas: { type: integer, minimum: 0, maximum: 10 }
+  required: [index, replicas]
+  additionalProperties: false
+preconditions: ["sentinel.packs.es.actions.es_actions:set_replicas_precheck"]
+dry_run: "sentinel.packs.es.actions.es_actions:set_replicas_dry_run"
+execute: "sentinel.packs.es.actions.es_actions:set_replicas_execute"
+rollback: "sentinel.packs.es.actions.es_actions:set_replicas_rollback"
+verify: { predicate: "sentinel.packs.es.actions.es_actions:set_replicas_verify", timeout_s: 300, poll_interval_s: 10 }
+requires_approval: true
+max_blast_radius: { indices: 1 }

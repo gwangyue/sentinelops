@@ -1,0 +1,14 @@
+# 恢复分片分配（03 §4.2）：清掉 cluster.routing.allocation.enable 的显式设置，回到默认的 all。
+schema_version: 1
+id: es.enable_allocation
+pack: es
+risk: low
+reversible: true
+params_schema: { type: object, properties: {}, additionalProperties: false }
+preconditions: ["sentinel.packs.es.actions.es_actions:enable_allocation_precheck"]
+dry_run: "sentinel.packs.es.actions.es_actions:enable_allocation_dry_run"
+execute: "sentinel.packs.es.actions.es_actions:enable_allocation_execute"
+rollback: "sentinel.packs.es.actions.es_actions:enable_allocation_rollback"
+verify: { predicate: "sentinel.packs.es.actions.es_actions:unassigned_zero_verify", timeout_s: 300, poll_interval_s: 10 }
+requires_approval: true
+max_blast_radius: { settings_changed: 1 }

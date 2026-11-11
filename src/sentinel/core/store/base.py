@@ -1,18 +1,15 @@
 """存储接口（01 §2 第⑤层 Postgres：checkpoint 之外的调查、审计、版本、观测索引）。
 
-负责：Store 协议、调查记录的行结构、审计哈希链的计算规则。
+负责：Store 协议、调查记录的行结构。审计哈希链的计算规则在 governance/audit.py。
 不负责：checkpoint（LangGraph 的 PostgresSaver 自己管）、原始观测输出（文件，见 core/observations）。
 """
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from sentinel.contracts import AgentVersion, AuditEvent, Observation
 
-GENESIS_HASH = "0" * 64
 InvestigationStatus = Literal["running", "healthy", "deduplicated", "diagnosed", "escalated", "failed"]
 
 
@@ -31,15 +28,6 @@ class InvestigationRecord:
     context_bundle: dict[str, Any] | None = None
     diagnosis: dict[str, Any] | None = None
     escalate_reason: str | None = None
-
-
-def event_hash(e: AuditEvent) -> str:
-    """一条审计事件的哈希 = sha256(事件的规范化 JSON，含 prev_hash)。
-
-    下一条事件的 prev_hash 就是它，形成哈希链（03 §5.1）。
-    """
-    data = json.dumps(e.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(data.encode()).hexdigest()
 
 
 class Store(Protocol):

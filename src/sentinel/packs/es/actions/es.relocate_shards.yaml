@@ -1,0 +1,20 @@
+# 把分片从一个节点迁走（03 §4.2）：迁移哪些分片在前置检查时就定下来，进入方案哈希；回滚把它们迁回原节点。
+schema_version: 1
+id: es.relocate_shards
+pack: es
+risk: medium
+reversible: true
+params_schema:
+  type: object
+  properties:
+    from_node: { type: string, minLength: 1, maxLength: 128 }
+    max_shards: { type: integer, minimum: 1, maximum: 20 }
+  required: [from_node, max_shards]
+  additionalProperties: false
+preconditions: ["sentinel.packs.es.actions.es_actions:relocate_precheck"]
+dry_run: "sentinel.packs.es.actions.es_actions:relocate_dry_run"
+execute: "sentinel.packs.es.actions.es_actions:relocate_execute"
+rollback: "sentinel.packs.es.actions.es_actions:relocate_rollback"
+verify: { predicate: "sentinel.packs.es.actions.es_actions:relocate_verify", timeout_s: 600, poll_interval_s: 15 }
+requires_approval: true
+max_blast_radius: { shards: 20 }

@@ -5,16 +5,16 @@
 
 import dataclasses
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from importlib.resources import files
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
-from ulid import ULID
 
 from sentinel.contracts import AgentVersion, AuditEvent, Observation
-from sentinel.core.store.base import GENESIS_HASH, InvestigationRecord, event_hash
+from sentinel.core.store.base import InvestigationRecord
+from sentinel.governance.audit import pg_append
 
 _JSON_FIELDS = {"findings", "fact_sheets", "context_bundle", "diagnosis"}
 
@@ -80,25 +80,14 @@ class PgStore:
         payload: dict[str, Any],
     ) -> AuditEvent:
         with self._conn() as c:
-            c.execute("LOCK TABLE audit_events IN EXCLUSIVE MODE")
-            last = c.execute("SELECT * FROM audit_events ORDER BY seq DESC LIMIT 1").fetchone()
-            prev = event_hash(_audit(last)) if last else GENESIS_HASH
-            e = AuditEvent(
-                id=f"aud_{ULID()}",
-                ts=datetime.now(UTC),
+            return pg_append(
+                c,
                 investigation_id=investigation_id,
                 agent_version=agent_version,
                 actor=actor,
                 type=type,
                 payload=payload,
-                prev_hash=prev,
             )
-            c.execute(
-                "INSERT INTO audit_events (id, ts, investigation_id, agent_version, actor, type, payload, prev_hash) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (e.id, e.ts, e.investigation_id, e.agent_version, e.actor, e.type, json.dumps(e.payload), e.prev_hash),
-            )
-        return e
 
     def audit_events(self, investigation_id: str | None = None) -> list[AuditEvent]:
         with self._conn() as c:
