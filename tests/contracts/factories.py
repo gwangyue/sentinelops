@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 from sentinel.contracts import (
+    ActionProposal,
     ActionSpec,
     AgentVersion,
     ApprovalDecision,
@@ -118,6 +119,9 @@ def all_samples() -> dict[str, Contract]:
             rollback="m:rb",
             verify=VerifySpec(predicate="m:verify", timeout_s=300),
             max_blast_radius={"shards": 50},
+        ),
+        "action_proposal": ActionProposal(
+            action_id="es.raise_watermark_temporarily", params={"high_pct": 94}, rationale_hypothesis="H1"
         ),
         "remediation_plan": RemediationPlan(
             id="pln_1",

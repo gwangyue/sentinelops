@@ -22,12 +22,13 @@ from sentinel.contracts.pack import (
     RootCauseDecl,
     ToolDecl,
 )
-from sentinel.contracts.plan import RemediationPlan
+from sentinel.contracts.plan import ActionProposal, RemediationPlan
 from sentinel.contracts.scenario import FaultRef, GroundTruth, ScenarioSpec, SymptomWait
 from sentinel.contracts.version import AgentVersion, VersionComponents
 
 __all__ = [
     "KNOWN_EVENT_TYPES",
+    "ActionProposal",
     "ActionSpec",
     "AgentVersion",
     "ApprovalDecision",

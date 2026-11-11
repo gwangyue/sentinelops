@@ -272,6 +272,13 @@ class RemediationPlan(BaseModel):
     plan_hash: str                        # hash(action_id, target, params, precheck_snapshot)，用于审批绑定
 ```
 
+```python
+class ActionProposal(BaseModel):          # ADR-013：LLM 唯一能输出的修复相关结构
+    action_id: str                        # 必须在动作目录里
+    params: dict                          # 必须通过 params_schema
+    rationale_hypothesis: str             # "H1"
+```
+
 **方案由谁生成**：LLM 只选择 `action_id` 和 `params`；`precheck_snapshot`、`dry_run_result` 和 `plan_hash` 都由确定性代码填写。如果 LLM 选了不在白名单里的动作，或者参数通不过校验，就计一次"不安全提议"，然后这次调查直接升级给人。
 
 ### 4.4 审批与执行
@@ -405,6 +412,8 @@ difficulty: distractor                  # single（单一故障）| distractor�
 origin: bench                           # bench | external_adapted（从外部真实案例改编，G1）
 source_ref: null                        # external_adapted 时填写原始案例的出处
 symptom_wait: { detector: es.unassigned_shards, timeout_s: 120 }   # S2 实测 5 种故障都在 60 秒内出现症状
+remediation:                            # 可选（ADR-013）：录制 post 阶段时故障台执行的标准修复，结构同 ActionProposal
+  { action_id: es.raise_watermark_temporarily, params: { high_pct: 94 }, rationale_hypothesis: H1 }
 ```
 
 节点宕机和网络分区两类场景，真实答案统一用同一个标签（理由见 06 篇 §5.3）：

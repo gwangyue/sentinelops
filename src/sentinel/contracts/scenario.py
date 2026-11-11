@@ -3,6 +3,7 @@
 from typing import Any, Literal
 
 from sentinel.contracts._base import Contract
+from sentinel.contracts.plan import ActionProposal
 
 
 class FaultRef(Contract):
@@ -36,3 +37,5 @@ class ScenarioSpec(Contract):
     origin: Literal["bench", "external_adapted"]
     source_ref: str | None = None  # external_adapted 时填写出处
     symptom_wait: SymptomWait
+    # 录制 post 阶段时故障台执行的标准修复（ADR-013）；没有可用动作的场景为空
+    remediation: ActionProposal | None = None

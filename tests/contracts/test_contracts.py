@@ -19,8 +19,8 @@ SAMPLE_MODELS = {name: type(obj) for name, obj in all_samples().items()}
 
 
 def test_covers_all_15_contracts() -> None:
-    # 03 §本篇结论：15 个契约；审批与执行算一个契约但有 3 个模型，所以这里是 17 个顶层模型
-    assert len(SAMPLE_MODELS) == 17
+    # 03 §本篇结论：15 个契约；审批与执行算一个契约但有 3 个模型，所以是 17 个顶层模型；ADR-013 新增 ActionProposal
+    assert len(SAMPLE_MODELS) == 18
 
 
 @pytest.mark.parametrize("name", sorted(SAMPLE_MODELS))

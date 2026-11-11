@@ -1,0 +1,7 @@
+{
+  "action_id": "es.raise_watermark_temporarily",
+  "params": {
+    "high_pct": 94
+  },
+  "rationale_hypothesis": "H1"
+}
