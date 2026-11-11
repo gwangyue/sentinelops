@@ -168,7 +168,7 @@ $ sentinel freeze --reason "执行器异常，人工排查"       【示意】
 
 **实现（M4 D14）**：`sentinel report weekly [--week 2026-W46] [--show-sql]`。
 - 第 1、2、3、5 项和"需要你决定的事"里来自审计的条目，每一个数字都是一条对 `audit_events` 的 SQL（`governance/report.py` 的 `QUERIES`，`--show-sql` 打印出来）；同一份 SQL 在 Postgres 和 sqlite 上都能跑，测试和 golden-demo 第 10 步把审计事件装进 sqlite 重算、和直接数事件的结果比对。
-- 第 4 项来自评测结果文件：当前上线版本取 `datasets/version_decisions.yaml` 里最新的 shipped；这个版本没有单独的结果时，用最近有结果的版本并写明。**`HELDOUT_LOG.md` 没有单独建**：heldout 的每次运行都留在 `var/eval/*__heldout.jsonl`，次数和时间从文件推出。
+- 第 4 项来自评测结果文件：当前上线版本取 `datasets/version_decisions.yaml` 里最新的 shipped；这个版本没有单独的结果时，用最近有结果的版本并写明。保留测试集的使用次数和最近日期读 `datasets/HELDOUT_LOG.md`（M2 独立审阅之后补建；中断的运行也算一次）。
 - 第 5 项：诊断的 token 来自 `diagnosis.completed` 审计，按 `config/pricing.yaml` 换算；**plan 节点那一次模型调用不在审计里**（要记得改 core，M4 要求 core 零改动），成本只含诊断。预算在 `config/governance.yaml`。
 - "需要你决定的事"自动列出：执行成功、没有回滚的临时修复（M3 报告 §9 的选项 B）；被自动失效的记忆；审批拒绝率高的动作；保留测试集超过 14 天没跑；dev 里场景少于 3 个的难度组。
 - 第一次在真实审计上运行（2026-W46）就列出了 3 个"没撤销的临时修复"——演示之后是手动在集群上恢复的，系统不知道。这正说明"撤销临时修复"需要一个有记录的流程。

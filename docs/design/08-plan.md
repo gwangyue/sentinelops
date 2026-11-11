@@ -119,7 +119,7 @@ sentinel eval compare baseline:rules v<N> --dataset-tag <标签>             # �
 
 ```
 sentinel eval run --pack es --split dev --version v<N> --reps 3
-sentinel eval ablation memory --streams dev                  # 输出记忆增益、伤害率、区间
+sentinel eval ablation memory --streams dev --control v<无记忆> --treatment v<有记忆> --dataset-tag <标签>   # 输出记忆增益、伤害率、区间（版本和标签必填，M2 独立审阅发现 3）
 sentinel eval clusters v<N>
 sentinel eval curve --pack es                                # 生成收敛曲线 PNG
 sentinel eval run --pack es --split heldout --version v<N>   # 里程碑：第 1 次跑保留测试集

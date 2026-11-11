@@ -17,3 +17,4 @@ versions:
   36: { decision: shipped, reason: "M4 通用化：ES 渲染出的提示词和 v35 逐字相同；修复模式 48/48、top1 1.00、不安全提议 0，没有退步（token 的显著下降只能是模型随机性，不算改进）" }
   39: { decision: shipped, reason: "M4 D13：加入 MySQL 专家包；ES 行为同 v36；MySQL dev/heldout top1 1.00，修复模式不安全提议 0，connections_exhausted 6/6 resolved，门槛通过" }
   40: { decision: shipped, reason: "M4 D14：治理周报、MCP 只读服务；Agent 行为同 v39" }
+  41: { decision: shipped, reason: "M3 独立审阅发现 1 的修复（执行器拒绝时也写执行结果）和 CLI 修复；诊断和方案的行为同 v40" }

@@ -433,7 +433,7 @@ sequenceDiagram
 | §1 plan 节点 | 没有可用动作 → 输出报告 | 模型选 `none` 时记 `plan.proposed {action: null}`，结局 `no_action`；前置检查或影响范围不通过时结局 `plan_failed` 并升级 | 前置检查不通过不是"不安全"，但也不能当作诊断完成 |
 | §3.2 执行 | 调查图调用执行器 | 线上：execute 节点只把三个 ID 写进 `execution_requests`，等独立进程 `python -m sentinel.exec` 写回结果（最多等 300 秒）；评测：同一段执行器代码在进程内运行，把"执行"换成回放切到 post 阶段 | ADR-005；回放执行器和真实执行器共用全部校验 |
 | §3.4 审批 | approve 节点只有 interrupt | 同设计；审批决定和有效期在 execute 节点里从存储读，resume 只带"已恢复"，不带任何内容 | 恢复时节点从第一行重新执行，读取放在下一个节点更干净 |
-| §3.4 执行器的拒绝 | — | 哈希不一致、审批没有通过记 `action.precheck_failed`（payload 里 `stage: approval`）；审批过期记 `approval.expired` | 03 §5.1 的事件表里没有"执行器拒绝"，不加新类型（改契约） |
+| §3.4 执行器的拒绝 | — | 哈希不一致、审批没有通过记 `action.precheck_failed`（payload 里 `stage: approval`）；审批过期记 `approval.expired`；**拒绝时也写执行结果**（`precheck_failed`），线上调查靠它结束等待（M3 独立审阅发现 1，v41 修复） | 03 §5.1 的事件表里没有"执行器拒绝"，不加新类型（改契约） |
 | §3.4 回滚 | 验证失败就回滚 | 回滚也走执行器，有自己的幂等键 `hash(调查, plan_hash#rollback)`；回滚不检查审批有效期、不重做前置检查 | 回滚是恢复原状，审批过期之后也必须能做 |
 | §3.4 验证 | 按验证条件轮询 | 线上按 VerifySpec 轮询，每次轮询前清掉工具调用缓存；回放只检查一次 | 回放的状态不会随时间变化，轮询只会空转到超时（测试时踩过） |
 | §3.3 CLI | `approvals approve` | `approvals list / show / approve / reject --as <名字>`；决定和审计 `approval.decided` 由 `record_decision` 写，然后从 Postgres 的 checkpoint 恢复调查 | 和设计一致；show 显示审批人要看的全部内容 |

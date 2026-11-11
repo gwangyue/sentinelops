@@ -526,3 +526,14 @@ LangSmith 记录的费用约为每次调查 0.008 美元。样本只有几次，
 - **成本不全**：plan 节点的模型调用不在审计里，要补需要改 core（M4 的零改动要求），暂时在周报里注明。
 - **mcp 2.x 改了 API**：`FastMCP` 改名为 `MCPServer`；工具函数的参数不能以下划线开头（签名会变成输入 schema），用闭包绑定工具。
 - 零改动：`git diff --stat m4-base..HEAD -- src/sentinel/core src/sentinel/exec` 仍然为空。版本 v40（Agent 行为同 v39）。
+
+## M2 / M3 独立审阅（补做，2026-11-11）
+
+08 §6.5 要求每个里程碑结束时做独立审阅，M2、M3 都漏了，这次补做：两个子 Agent 只读、看不到写代码的过程，分别读 tag `m2`、`m3` 的代码。结论写在 `docs/reports/M2-report.md`、`M3-report.md` 的"独立审阅"一节。
+
+| 里程碑 | 发现 | 修复 |
+|---|---|---|
+| M2 | 4 条：golden-demo 收尾时没打开（M3 已补）；`HELDOUT_LOG.md` 不存在、保留测试集超用；`ablation memory` 的默认值绕过标签护栏；发布版本 v28 没有自己的评测结果 | 补建 `HELDOUT_LOG.md`（回填时发现 M4 MySQL 也超用了）；`ablation memory` 参数必填；v28 记为缺口 |
+| M3 | 安全主路径符合设计；2 条：执行器拒绝时不写执行结果（线上白等 300 秒、升级原因错）；确认命令不检查调查停在哪 | 都修了（v41）。前一条改了 `exec/core.py`，**作为 M4 零改动验收的例外**（你同意的） |
+
+**M4 零改动的现状**：`git diff --stat m4-base..HEAD -- src/sentinel/core src/sentinel/exec` 只有 `exec/core.py`（+4 行，就是上面这条修复），和 MySQL 专家包无关。
