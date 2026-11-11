@@ -535,45 +535,21 @@ def approvals_show(approval_id: str) -> None:
 
 
 def _decide(approval_id: str, decision: Literal["approved", "rejected"], who: str, reason: str | None) -> None:
-    from datetime import UTC, datetime
-
-    from sentinel.contracts import ApprovalDecision
+    from sentinel.core.graph.remediate import record_decision
     from sentinel.core.graph.run import resume_online
     from sentinel.core.store import open_store
     from sentinel.core.toolbackend import Mode
     from sentinel.governance.remediation_store import DuplicateError
 
-    st = _rem_store()
-    r = st.get_approval_request(approval_id)
-    plan = st.get_plan(r.plan_id) if r else None
-    if r is None or plan is None:
-        raise typer.BadParameter(f"没有审批请求 {approval_id}")
     try:
-        st.put_decision(
-            ApprovalDecision(
-                approval_id=approval_id,
-                decision=decision,
-                approver=f"human:{who}",
-                reason=reason,
-                decided_at=datetime.now(UTC),
-            )
-        )
+        plan = record_decision(_rem_store(), open_store().append_audit, approval_id, decision, f"human:{who}", reason)
+    except KeyError as e:
+        raise typer.BadParameter(str(e)) from e
     except DuplicateError as e:
         typer.echo(f"拒绝：{e}（一个审批只能决定一次）", err=True)
         raise typer.Exit(1) from e
-    store = open_store()
-    # 07 §4：审批人不能审批自己发起的调查——第一版不强制，只记进审计，周报里提示
-    store.append_audit(
-        investigation_id=plan.investigation_id,
-        agent_version=None,
-        actor=f"human:{who}",
-        type="approval.decided",
-        payload={"approval_id": approval_id, "decision": decision, "plan_hash": r.plan_hash, "reason": reason},
-    )
-    typer.echo(
-        f"已{'批准' if decision == 'approved' else '拒绝'} {approval_id}（方案哈希 {r.plan_hash[:16]}…），"
-        f"继续调查 {plan.investigation_id}"
-    )
+    word = "批准" if decision == "approved" else "拒绝"
+    typer.echo(f"已{word} {approval_id}（方案哈希 {plan.plan_hash[:16]}…），继续调查 {plan.investigation_id}")
     out = resume_online(plan.investigation_id, Mode.LIVE)
     typer.echo(f"{plan.investigation_id}  状态 {out.get('status')}  修复 {out.get('remediation')}")
 

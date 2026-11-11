@@ -16,14 +16,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import jsonschema
 from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
 from ulid import ULID
 
-from sentinel.contracts import ActionProposal, ActionSpec, ApprovalRequest, Diagnosis, ExecutionResult, RemediationPlan
+from sentinel.contracts import (
+    ActionProposal,
+    ActionSpec,
+    ApprovalDecision,
+    ApprovalRequest,
+    Diagnosis,
+    ExecutionResult,
+    RemediationPlan,
+)
 from sentinel.governance.plan_hash import idempotency_key, plan_hash
 from sentinel.governance.remediation_store import ExecKind, RemediationStore
 from sentinel.sdk import ActionContext, ToolCaller, resolve_entry
@@ -175,3 +183,37 @@ def execution_keys(plan: RemediationPlan, kind: ExecKind) -> str:
 
 def plan_prompt_message(specs: dict[str, ActionSpec], d: Diagnosis) -> list[HumanMessage]:
     return [HumanMessage(content=render_plan_prompt(specs, d))]
+
+
+def record_decision(
+    rem: RemediationStore,
+    audit: Callable[..., Any],
+    approval_id: str,
+    decision: Literal["approved", "rejected"],
+    approver: str,
+    reason: str | None,
+) -> RemediationPlan:
+    """写入审批决定和审计 approval.decided（02 §3.2"API 写入审批记录"）。CLI 和测试都用这一个函数。
+    重复决定由存储的唯一约束挡住（DuplicateError）。返回被审批的方案（调用方用它找到要恢复的调查）。"""
+    req = rem.get_approval_request(approval_id)
+    plan = rem.get_plan(req.plan_id) if req else None
+    if req is None or plan is None:
+        raise KeyError(f"没有审批请求 {approval_id}")
+    rem.put_decision(
+        ApprovalDecision(
+            approval_id=approval_id,
+            decision=decision,
+            approver=approver,
+            reason=reason,
+            decided_at=datetime.now(UTC),
+        )
+    )
+    # 07 §4：审批人不能审批自己发起的调查——第一版不强制，只记进审计，周报里提示
+    audit(
+        investigation_id=plan.investigation_id,
+        agent_version=None,
+        actor=approver,
+        type="approval.decided",
+        payload={"approval_id": approval_id, "decision": decision, "plan_hash": req.plan_hash, "reason": reason},
+    )
+    return plan

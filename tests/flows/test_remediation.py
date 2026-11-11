@@ -6,7 +6,7 @@
 import json
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage
 
@@ -48,21 +48,8 @@ def with_plan(proposal: str):  # type: ignore[no-untyped-def]
 GOOD = json.dumps({"action_id": RAISE, "params": {"high_pct": 94}, "rationale_hypothesis": "H1"})
 
 
-def approve(h: Harness, decision: str = "approved") -> None:
-    from datetime import UTC, datetime
-
-    from sentinel.contracts import ApprovalDecision
-
-    for req in h.rem_store.list_approval_requests():
-        h.rem_store.put_decision(
-            ApprovalDecision(
-                approval_id=req.id,
-                decision=decision,
-                approver="human:t",
-                reason=None,  # type: ignore[arg-type]
-                decided_at=datetime.now(UTC),
-            )
-        )
+def approve(h: Harness, decision: Literal["approved", "rejected"] = "approved") -> None:
+    h.decide(decision)
 
 
 def test_full_path_resolves(harness: H, tmp_path: Path) -> None:
@@ -80,8 +67,9 @@ def test_full_path_resolves(harness: H, tmp_path: Path) -> None:
     assert out["status"] == "resolved" and out["remediation"] == "resolved"
     types = h.audit_types(s["inv_id"])
     i = types.index
-    assert i("plan.proposed") < i("approval.requested") < i("verify.passed") < i("investigation.closed")
-    assert [e.type for e in h.rem_store.audit] == ["action.executed"]  # 执行器写的审计（同一条哈希链的规则）
+    # golden-demo 第 6 步的顺序；执行器的 action.executed 和调查在同一条审计链上
+    assert i("plan.proposed") < i("approval.requested") < i("approval.decided") < i("action.executed")
+    assert i("action.executed") < i("verify.passed") < i("investigation.closed")
 
 
 def test_unsafe_proposals_are_blocked(harness: H, tmp_path: Path) -> None:
@@ -112,7 +100,8 @@ def test_verify_failure_rolls_back(harness: H, tmp_path: Path) -> None:
     out = h.resume(s["inv_id"])
     assert out["remediation"] == "rolled_back" and out["status"] == "escalated"
     assert "verify.failed" in h.audit_types(s["inv_id"])
-    assert [e.type for e in h.rem_store.audit] == ["action.executed", "action.rolled_back"]
+    types = h.audit_types(s["inv_id"])
+    assert types.index("action.executed") < types.index("verify.failed") < types.index("action.rolled_back")
 
 
 def test_action_without_post_recording_is_not_scored(harness: H, tmp_path: Path) -> None:

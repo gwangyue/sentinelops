@@ -103,6 +103,95 @@ def step4_context_report() -> tuple[Status, str]:
     return Status.PASS, ""
 
 
+def _remediation_run():  # type: ignore[no-untyped-def]
+    """修复模式跑到审批暂停：disk_watermark 录制 + 一条 post 记录（执行 raise_watermark 之后变绿）。
+    假模型提议提高水位。"""
+    import tempfile
+
+    from tests.flows.test_remediation import GOOD, fixture, with_plan
+    from tests.harness import Harness
+
+    tmp = Path(tempfile.mkdtemp())
+    h = Harness(tmp, fixture(tmp), with_plan(GOOD), remediate=True)
+    return h, h.run("remediate")
+
+
+def step5_plan() -> tuple[Status, str]:
+    """动作在白名单里；参数能通过 params_schema；plan_hash 能由确定性代码重新算出来（golden-demo 第 5 步）。"""
+    import jsonschema
+
+    from sentinel.contracts import RemediationPlan
+    from sentinel.core.packs_registry import load_pack
+    from sentinel.governance.plan_hash import plan_hash
+
+    _, s = _remediation_run()
+    if not s.get("plan"):
+        return Status.FAIL, f"没有修复方案：{s.get('remediation')}"
+    pl = RemediationPlan.model_validate(s["plan"])
+    specs = load_pack("es").actions
+    if pl.action_id not in specs:
+        return Status.FAIL, f"{pl.action_id} 不在动作目录里"
+    try:
+        jsonschema.validate(pl.params, specs[pl.action_id].params_schema)
+    except jsonschema.ValidationError as e:
+        return Status.FAIL, f"参数通不过 params_schema：{e.message}"
+    if plan_hash(pl.action_id, pl.target, pl.params, pl.precheck_snapshot) != pl.plan_hash:
+        return Status.FAIL, "plan_hash 不能由确定性代码重新算出来"
+    return Status.PASS, ""
+
+
+def step6_approve_execute_verify() -> tuple[Status, str]:
+    """审计中依次出现 approval.decided → action.executed → verify.passed；
+    执行器记录的 plan_hash 和审批时一致；幂等键唯一（golden-demo 第 6 步）。"""
+    h, s = _remediation_run()
+    h.decide("approved")
+    out = h.resume(s["inv_id"])
+    ev = h.store.audit_events(s["inv_id"])
+    types = [e.type for e in ev]
+    try:
+        ok = types.index("approval.decided") < types.index("action.executed") < types.index("verify.passed")
+    except ValueError:
+        return Status.FAIL, f"审计里缺少事件：{types}"
+    if not ok:
+        return Status.FAIL, f"顺序不对：{types}"
+    decided = next(e for e in ev if e.type == "approval.decided").payload["plan_hash"]
+    executed = next(e for e in ev if e.type == "action.executed").payload["plan_hash"]
+    if decided != executed:
+        return Status.FAIL, "执行器记录的 plan_hash 和审批时的不一致"
+    keys = list(h.rem_store.executions)
+    if len(keys) != len(set(keys)) or out.get("status") != "resolved":
+        return Status.FAIL, f"幂等键重复或没有解决：{keys} {out.get('status')}"
+    return Status.PASS, ""
+
+
+def step9_curve_and_ablation() -> tuple[Status, str]:
+    """曲线上的每个点都有对应的版本和数据集标签；消融结果包含增益、伤害率、区间 3 项（离线、用合成结果）。"""
+    import tempfile
+
+    from tests.contracts.factories import all_samples
+
+    from sentinel.eval import results
+    from sentinel.eval.curve import points
+    from sentinel.eval.stats.bootstrap import compare
+    from sentinel.eval.stream import memory_summary
+
+    tmp = Path(tempfile.mkdtemp())
+    base = all_samples()["run_score"]
+    a = [base.model_copy(update={"example_id": f"s{i}.x#r1", "steps": 4}) for i in range(4)]  # type: ignore[attr-defined]
+    b = [x.model_copy(update={"steps": 3, "memory_hit": True}) for x in a]
+    results.save(tmp / "v1__ds-20261111-1__dev.jsonl", a)
+    pts = points(tmp, {1: "note"}, {})
+    if not pts or any(not (p.seq and p.tag) for p in pts):
+        return Status.FAIL, "曲线的点缺少版本或数据集标签"
+    c = compare(a, b, metric="steps")
+    side = tmp / "x.memory.jsonl"
+    side.write_text('{"truth": "t", "l5": ["t"], "harm": false}\n' * 4, encoding="utf-8")
+    summary = memory_summary(side, b)
+    if not ("伤害率" in summary and c.low <= c.point <= c.high):
+        return Status.FAIL, f"消融结果缺少增益、伤害率或区间：{summary}"
+    return Status.PASS, ""
+
+
 SCENARIO = Path(__file__).resolve().parents[1] / "src/sentinel/packs/es/scenarios/disk_watermark.single.yaml"
 
 # 步骤编号 → 检查函数。实现某一步的那天，在这里换成真正的检查。
@@ -111,6 +200,9 @@ CHECKS[1] = step1_patrol_healthy
 CHECKS[2] = step2_inject
 CHECKS[3] = step3_diagnosis
 CHECKS[4] = step4_context_report
+CHECKS[5] = step5_plan
+CHECKS[6] = step6_approve_execute_verify
+CHECKS[9] = step9_curve_and_ablation
 
 
 def run(force_all: bool) -> int:

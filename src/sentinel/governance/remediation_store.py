@@ -8,6 +8,7 @@ Memory 实现给测试和回放评测用：评测不写 Postgres（06 §9）。
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -53,7 +54,9 @@ class RemediationStore(Protocol):
 
 
 class MemoryRemediationStore:
-    def __init__(self) -> None:
+    def __init__(self, audit_sink: Callable[..., AuditEvent] | None = None) -> None:
+        # audit_sink：调查存储的 append_audit。给了它，执行器的审计就和调查写在同一条链上（和 Postgres 一样）
+        self.audit_sink = audit_sink
         self.plans: dict[str, RemediationPlan] = {}
         self.requests: dict[str, ApprovalRequest] = {}
         self.decisions: dict[str, ApprovalDecision] = {}
@@ -101,6 +104,12 @@ class MemoryRemediationStore:
     def append_audit(
         self, *, investigation_id: str | None, actor: str, type: str, payload: dict[str, Any]
     ) -> AuditEvent:
+        if self.audit_sink is not None:
+            e0 = self.audit_sink(
+                investigation_id=investigation_id, agent_version=None, actor=actor, type=type, payload=payload
+            )
+            self.audit.append(e0)
+            return e0
         e = new_event(
             self.audit[-1] if self.audit else None,
             investigation_id=investigation_id,

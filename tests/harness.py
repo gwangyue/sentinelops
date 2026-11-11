@@ -5,7 +5,7 @@
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
@@ -14,6 +14,7 @@ from ulid import ULID
 
 from sentinel.core.detect import load_env
 from sentinel.core.graph.investigation import Deps, InvState, build_graph
+from sentinel.core.graph.remediate import record_decision
 from sentinel.core.llm.fake import Script, ScriptedChatModel
 from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack, load_pack
@@ -54,7 +55,7 @@ class Harness:
             return ToolBackend(pack.tools, self.obs, inv, Mode.REPLAY, fixture=fx)
 
         # 修复段：内存里的修复存储 + 回放执行器（和评测同一套组装，eval/replay_exec.py）
-        self.rem_store = MemoryRemediationStore()
+        self.rem_store = MemoryRemediationStore(audit_sink=self.store.append_audit)  # 和线上一样，同一条审计链
         self.saver = InMemorySaver()  # run 和 resume 共用：interrupt 之后要能找回同一个线程的状态
 
         self.deps = Deps(
@@ -80,6 +81,12 @@ class Harness:
             {"configurable": {"thread_id": inv}},
         )
         return {**out, "inv_id": inv}
+
+    def decide(self, decision: Literal["approved", "rejected"] = "approved", who: str = "human:t") -> None:
+        """模拟 CLI 的 approvals approve / reject：同一个 record_decision。"""
+        for req in self.rem_store.list_approval_requests():
+            if self.rem_store.get_decision(req.id) is None:
+                record_decision(self.rem_store, self.store.append_audit, req.id, decision, who, None)
 
     def resume(self, inv: str) -> InvState:
         g = build_graph(self.deps, self.saver)
