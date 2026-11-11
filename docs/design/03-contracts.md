@@ -348,6 +348,7 @@ class AuditEvent(BaseModel):
 | `memory.written` / `.invalidated` | 记忆的写入和失效 |
 | `mcp.call` | 外部 Agent 的调用 |
 | `budget.exceeded` | 超出预算 |
+| `freeze.enabled` / `.disabled` | 紧急停止和解除（ADR-014；07 §7） |
 
 ### 5.2 Agent 版本（AgentVersion）
 

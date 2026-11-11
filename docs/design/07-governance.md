@@ -104,6 +104,8 @@
 | 校验 | `sentinel audit verify --since 7d`：重新计算整条链，报告第一个断点 |
 | 外部锚定 | 每天把最后一条事件的哈希写入一个只追加的文件（本地）或者 S3（云上，可以开启对象锁）【推断：作品项目里可以只做本地】 |
 
+**实现（M3 D12）**：`sentinel audit verify --since 7d` 逐条重算哈希，窗口的第一条接到窗口之前的那一条；`sentinel audit anchor` 把最后一条事件的哈希追加到 `var/audit/anchors.log`，`verify` 时一并核对。单元测试覆盖了三种情况：改动中间一条、删除中间一条（都在下一条报出断点）、改最后一条之后整条链重算（链本身查不出，锚定能查出）。**还没做**：应用账号只授予 INSERT（compose 和 kind 上现在用的是超级用户，`TODO(edge)`）。
+
 **能防什么、不能防什么**：哈希链能发现"改动或删除了中间的记录"，但如果攻击者拥有数据库的完全控制权限，可以把整条链重新计算一遍。外部锚定就是用来防这种情况的。第一版只把这一点讲清楚，不追求实现完整。
 
 ## 6. 预算与数据外流
@@ -149,6 +151,8 @@ $ sentinel freeze --reason "执行器异常，人工排查"       【示意】
 | 冻结状态存在 Postgres 里，执行器每次执行前都要读取 | 不依赖 agent-api 是否正常运行 |
 | 冻结之后仍然继续诊断 | 出了问题的时候，最需要的就是诊断信息 |
 | 冻结和解冻都写入审计 | 可以追溯 |
+
+**实现（M3 D12）**：`sentinel freeze --reason --as`、`sentinel unfreeze --reason --as`（`governance/kill_switch.py`）。冻结状态存在 Postgres 的 `freeze_events` 表（只追加）；执行器在所有校验之前先读它，冻结时拒绝执行（`action.precheck_failed`，`stage: frozen`），回滚也不做——冻结就是要人接手；plan 节点不出方案（记 `plan.proposed {action: null, reason: frozen}`），诊断照常；待审批写成 `rejected`（`system:freeze`）并记 `approval.expired`。审计事件类型 `freeze.enabled` / `.disabled` 见 ADR-014。解冻"需要审批人角色"第一版只记 `--as`，不强制（07 §4 同样的理由）。
 
 ## 8. 周报：每周 30 分钟看 5 个数
 
