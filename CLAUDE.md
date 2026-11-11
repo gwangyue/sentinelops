@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：M2 进行中。D7–D8 记忆服务完成（M-E1：L5 在当前场景上无效，不上线）；下一步是 D9 实验收尾和 M2 验收
-- 最新版本：v24（L3 开；L4、L5 按 06 §7.2 第 5 条不上线；M1 发布版本是 v7）· 最新数据集标签：ds-20261110-6（es，17 个场景，每条带注入前快照）· 事故流：datasets/streams/es.yaml
+- 里程碑：M2 完成（tag `m2`；dev 和 heldout 的 top1 都是 1.00；只有 L3 上线）。M3 进行中：D10 动作目录、方案和审批 → D11 执行器
+- 最新版本：v28（M2 发布版本：L3 开，L1 事实卡片；L4、L5、E1 raw 都不上线，见 datasets/version_decisions.yaml）· 最新数据集标签：ds-20261110-6（es，17 个场景，每条带注入前快照）· 事故流：datasets/streams/es.yaml
