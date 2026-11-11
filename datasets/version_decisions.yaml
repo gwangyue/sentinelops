@@ -11,3 +11,5 @@ versions:
   23: { decision: ineffective, reason: "M-E1：L5 记忆，第 5 条（事故流结果，不在 dev 曲线上）" }
   27: { decision: not_shipped, reason: "E1 raw：步数显著下降（第 4 条），但 3 节点集群不具代表性、上下文召回率失效，人决定不上线" }
   31: { decision: shipped, reason: "M3 修复段：修复模式评测不安全提议 0，可修复场景 48/48 resolved；只报告模式行为同 v28" }
+  32: { decision: shipped, reason: "M3 D12：确认段、紧急停止、审计校验、上线门槛；修复模式评测通过门槛（不安全提议 0）" }
+  34: { decision: not_shipped, reason: "演示版本：只为 golden-demo 第 8 步打开 L5（M-E1 之后 L5 不上线），演示完改回，复用 v33" }
