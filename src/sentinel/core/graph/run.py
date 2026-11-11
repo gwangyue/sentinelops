@@ -21,7 +21,7 @@ from langgraph.types import Command
 from ulid import ULID
 
 from sentinel.contracts import AgentVersion, ExecutionResult
-from sentinel.core.context.knowledge_layer import KnowledgeRetriever, NoKnowledge
+from sentinel.core.context.knowledge_layer import KnowledgeRetriever, NoKnowledge, PerPackKnowledge
 from sentinel.core.context.memory_layer import MemoryProvider, NoMemory
 from sentinel.core.detect import load_env
 from sentinel.core.graph.confirm import Memorizer
@@ -36,7 +36,7 @@ from sentinel.core.memory.policy import load_memory_policy
 from sentinel.core.memory.provider import StoreMemoryProvider
 from sentinel.core.memory.store import EsMemoryStore
 from sentinel.core.observations.store import ObservationStore
-from sentinel.core.packs_registry import LoadedPack, load_pack
+from sentinel.core.packs_registry import LoadedPack, discover_packs, load_pack
 from sentinel.core.store import Store, open_store
 from sentinel.core.toolbackend import Mode, ToolBackend, open_backend
 from sentinel.core.versioning.components import behavior_dirty, collect_components, load_context_policy
@@ -47,11 +47,11 @@ from sentinel.governance.remediation_store import ExecKind, PgRemediationStore, 
 OBS_ROOT = Path(os.environ.get("SENTINEL_OBS_ROOT", "var/observations"))
 PG_URL = os.environ.get("SENTINEL_PG_URL", "postgresql://postgres:sentinel-local@localhost:5432/sentinel")
 EXEC_WAIT_S = 300  # 等执行器的上限：执行器进程没起来时，调查不会永远卡住
-PACKS = ("es",)  # TODO(edge): 从配置或 entry point 发现专家包（M4 加 mysql 时）
 
 
 def load_packs() -> dict[str, LoadedPack]:
-    return {name: load_pack(name) for name in PACKS}
+    # 专家包自动发现（M4 D13）：新增一个领域只加 sentinel/packs/<名字>/，不改这里
+    return {name: load_pack(name) for name in discover_packs()}
 
 
 def current_version(store: Store) -> AgentVersion:
@@ -79,9 +79,11 @@ def make_deps(
 
     knowledge: KnowledgeRetriever = NoKnowledge()
     if policy.get("layers", {}).get("L4"):
-        # 索引和当前 runbook 不一致就直接报错，不悄悄用旧知识（EsKnowledge 构造时校验）
-        # TODO(edge): 多个专家包时按问题事件的领域选知识库
-        knowledge = EsKnowledge("es", knowledge_hash(packs["es"]), embed)
+        # 索引和当前 runbook 不一致就直接报错，不悄悄用旧知识（EsKnowledge 构造时校验）。
+        # EsKnowledge 是"存在 es-memory 里的知识库"，和专家包是不是 ES 无关；每个有 knowledge 的专家包各一个
+        knowledge = PerPackKnowledge(
+            {n: EsKnowledge(n, knowledge_hash(p), embed) for n, p in packs.items() if p.manifest.knowledge}
+        )
     if memory is None:
         memory = NoMemory()
         if policy.get("layers", {}).get("L5"):
@@ -194,7 +196,7 @@ def _trace(target: str, backend: str) -> dict[str, Any]:
 
 
 def patrol(
-    target: str, pack: str = "es", mode: Mode = Mode.LIVE, fixture: Path | None = None, inv_mode: str = "report_only"
+    target: str, pack: str, mode: Mode = Mode.LIVE, fixture: Path | None = None, inv_mode: str = "report_only"
 ) -> InvState:
     deps = _online_deps(mode, fixture)
     with PostgresSaver.from_conn_string(PG_URL) as saver:

@@ -53,6 +53,7 @@ from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack
 from sentinel.core.store import InvestigationRecord, Store
 from sentinel.core.toolbackend import Mode, ToolBackend
+from sentinel.sdk import domain_name
 
 ACTOR = "agent"
 # 02 §2：同一个指纹 30 分钟内只调查一次，否则同一个问题每次巡检都会触发一次调查
@@ -270,7 +271,7 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
             return {"remediation": "frozen"}
         d = Diagnosis.model_validate(state["diagnosis"])
         msg = deps.make_model("diagnosis").invoke(
-            plan_prompt_message(pack.actions, d),
+            plan_prompt_message(pack.actions, d, domain_name(pack.manifest.connection.kind)),
             cast(RunnableConfig, run_tags("plan", state["agent_version"], state["inv_id"])),
         )
         calls = state.get("model_calls", 0) + 1

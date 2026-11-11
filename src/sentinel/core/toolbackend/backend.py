@@ -19,7 +19,7 @@ from sentinel.core.credentials import resolve
 from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack, LoadedTool
 from sentinel.core.toolbackend.canonical import canonical_args, replay_key
-from sentinel.sdk import HttpError, ReadOnlyHttp, ToolResult, fit_budget
+from sentinel.sdk import ToolCallError, ToolResult, fit_budget, open_read
 
 
 class Mode(StrEnum):
@@ -90,7 +90,7 @@ class ToolBackend:
         investigation_id: str,
         mode: Mode,
         *,
-        http: Callable[[], ReadOnlyHttp] | None = None,
+        http: Callable[[], Any] | None = None,  # 只读连接的工厂（sdk.open_read，类型由 connection.kind 决定）
         fixture: Path | None = None,
         phase: str = "pre",
     ) -> None:
@@ -100,7 +100,7 @@ class ToolBackend:
             raise ValueError("record / replay 模式需要录制文件路径")
         self.tools, self.store, self.investigation_id, self.mode = tools, store, investigation_id, mode
         self._http_factory = http
-        self._http: ReadOnlyHttp | None = None
+        self._http: Any = None
         self._fixture = fixture
         self._replay = ReplayIndex(fixture) if mode is Mode.REPLAY and fixture else None
         self._memo: dict[str, ToolResult] = {}
@@ -157,7 +157,7 @@ class ToolBackend:
             self._http = self._http_factory()
         try:
             fetched = _Fetched("ok", spec.impl.fetch(self._http, {**spec.impl.defaults, **cargs}))
-        except HttpError as e:
+        except ToolCallError as e:
             fetched = _Fetched("error", {"status": e.status, "body": e.body[:2000]})
         if self.mode is Mode.RECORD:
             assert self._fixture is not None
@@ -191,5 +191,6 @@ def open_backend(
     http = None
     if mode is not Mode.REPLAY:
         conn = resolve(pack.manifest.connection.read_credential)
-        http = lambda: ReadOnlyHttp(conn.url, conn.user, conn.password)  # noqa: E731
+        kind = pack.manifest.connection.kind
+        http = lambda: open_read(kind, conn.url, conn.user, conn.password)  # noqa: E731
     return ToolBackend(pack.tools, store, investigation_id, mode, http=http, fixture=fixture)

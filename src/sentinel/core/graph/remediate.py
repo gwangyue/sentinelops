@@ -63,7 +63,7 @@ def catalog_text(specs: dict[str, ActionSpec]) -> str:
     )
 
 
-def render_plan_prompt(specs: dict[str, ActionSpec], d: Diagnosis) -> str:
+def render_plan_prompt(specs: dict[str, ActionSpec], d: Diagnosis, domain: str) -> str:
     h1 = d.hypotheses[0]
     diag = json.dumps(
         {
@@ -72,7 +72,7 @@ def render_plan_prompt(specs: dict[str, ActionSpec], d: Diagnosis) -> str:
         },
         ensure_ascii=False,
     )
-    return PLAN_PROMPT.read_text(encoding="utf-8").format(catalog=catalog_text(specs), diagnosis=diag)
+    return PLAN_PROMPT.read_text(encoding="utf-8").format(domain=domain, catalog=catalog_text(specs), diagnosis=diag)
 
 
 def parse_proposal(text: str) -> ActionProposal | None:
@@ -182,8 +182,8 @@ def execution_keys(plan: RemediationPlan, kind: ExecKind) -> str:
     return idempotency_key(plan.investigation_id, h)
 
 
-def plan_prompt_message(specs: dict[str, ActionSpec], d: Diagnosis) -> list[HumanMessage]:
-    return [HumanMessage(content=render_plan_prompt(specs, d))]
+def plan_prompt_message(specs: dict[str, ActionSpec], d: Diagnosis, domain: str) -> list[HumanMessage]:
+    return [HumanMessage(content=render_plan_prompt(specs, d, domain))]
 
 
 def record_decision(

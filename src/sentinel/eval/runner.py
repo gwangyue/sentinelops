@@ -49,7 +49,11 @@ def checked_version(version_arg: str | None) -> AgentVersion:
 
 
 def run_one(
-    inputs: dict[str, Any], version: AgentVersion, memory: MemoryProvider | None = None, mode: str = "report_only"
+    inputs: dict[str, Any],
+    version: AgentVersion,
+    memory: MemoryProvider | None = None,
+    mode: str = "report_only",
+    pack: str = "es",
 ) -> dict[str, Any]:
     """一次调查：和线上同一套组装（core.make_deps），只是换成独立的内存存储 + 回放 fixture_ref。
     不写 Postgres，不留审计（评测不是线上调查）。memory 由事故流运行器传入（每条流一个临时记忆索引）。
@@ -60,7 +64,7 @@ def run_one(
     holder: dict[str, Any] = {}
     remediation = (
         replay_remediation(
-            rem_store, load_packs()["es"].actions, lambda inv: holder["deps"].backend(load_packs()["es"], inv)
+            rem_store, load_packs()[pack].actions, lambda inv: holder["deps"].backend(load_packs()[pack], inv)
         )
         if mode == "remediate"
         else None
@@ -76,7 +80,7 @@ def run_one(
     )
     holder["deps"] = deps
     saver = InMemorySaver()  # investigate 和 resume 共用：恢复时要找回同一个线程的状态
-    s = investigate(deps, inputs["trigger"]["target"], "es", saver, mode=mode)
+    s = investigate(deps, inputs["trigger"]["target"], pack, saver, mode=mode)
     if "__interrupt__" in s and approve_all(rem_store):
         s = resume(deps, s["inv_id"], saver)
     return {
@@ -118,7 +122,7 @@ def run(
         raise EvalError(f"sentinel-{pack} 在 {tag} / {split} 下没有用例")
 
     def target(inputs: dict[str, Any]) -> dict[str, Any]:
-        return run_one(inputs, version, mode=mode)
+        return run_one(inputs, version, mode=mode, pack=pack)
 
     def scorer(inputs: dict[str, Any], outputs: dict[str, Any], reference_outputs: dict[str, Any]) -> dict[str, Any]:
         s = score(

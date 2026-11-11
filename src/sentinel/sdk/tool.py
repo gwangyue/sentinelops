@@ -10,8 +10,6 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 
-from sentinel.sdk.http import ReadOnlyHttp
-
 Args = Mapping[str, Any]
 
 
@@ -20,7 +18,7 @@ class ReadTool:
     """一个只读工具 = 取原始数据 + 确定性摘要器。pack.yaml 的 entry 指向这样一个对象。"""
 
     description: str  # 给模型看的工具描述；它的哈希会进入 AgentVersion（03 §5.2）
-    fetch: Callable[[ReadOnlyHttp, Args], Any]
+    fetch: Callable[[Any, Args], Any]  # 第一个参数：这个专家包的只读连接（connect.open_read）
     summarize: Callable[[Any, Args], str]  # 原始输出 → 摘要；只用确定性代码，不用 LLM（04 §3.3）
     defaults: Mapping[str, Any] = field(default_factory=dict)  # 参数规范化时会被去掉，避免同一调用两个回放键
     # 给模型看的参数定义（字段描述会进入工具描述）；没有参数的工具为 None

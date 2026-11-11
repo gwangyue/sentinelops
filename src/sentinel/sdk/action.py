@@ -2,7 +2,7 @@
 
 负责：定义动作函数拿到什么、返回什么。
 - 前置检查、预演、验证只拿到只读的 ToolCaller：它们在调查引擎里跑（回放模式下也能跑），不能有写权限；
-- 执行、回滚额外拿到 WriteHttp：只有执行器进程会构造它（写凭证只在 exec/，ADR-005）。
+- 执行、回滚额外拿到写连接（ctx.conn）：只有执行器进程会构造它（写凭证只在 exec/，ADR-005）。
 不负责：谁来调用、按什么顺序调用（plan 节点、执行器）。
 """
 
@@ -41,7 +41,7 @@ class ExecContext:
     target: str
     params: Mapping[str, Any]
     precheck_snapshot: Mapping[str, Any]
-    http: WriteHttp
+    conn: Any  # 写连接（ES 是 WriteHttp）；按 connection.kind 由 connect.open_write 构造
 
 
 @dataclass(frozen=True)

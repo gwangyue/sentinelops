@@ -128,3 +128,23 @@ def test_replay_post_phase_only_for_recorded_action(tmp_path: Path) -> None:
     assert tb.enter_post("es.enable_allocation")
     assert tb.call("es.cluster_health").raw["status"] == "green"
     assert tb.call("es.index_settings", {"index": "x"}).status == "replay_miss"  # post 里没录到的就是 miss
+
+
+def test_every_registered_read_connection_is_read_only() -> None:
+    # 连接注册表（M4 D13）：每种领域的只读连接类上都没有写方法，新增领域也一样
+    from sentinel.sdk import CONNECTORS
+
+    for kind, c in CONNECTORS.items():
+        for m in ("put", "post", "delete", "patch", "execute", "executemany", "commit"):
+            assert not hasattr(c.read, m), f"{kind} 的只读连接有写方法 {m}"
+
+
+def test_packs_are_discovered_and_prompts_name_the_domain() -> None:
+    from sentinel.contracts import RootCauseDecl
+    from sentinel.core.diagnosis.agent import render_prompt
+    from sentinel.core.packs_registry import discover_packs
+    from sentinel.sdk import domain_name
+
+    assert "es" in discover_packs()
+    text = render_prompt([RootCauseDecl(label="es.unknown", description="d")], domain_name("elasticsearch"))
+    assert "Elasticsearch 运维专家" in text and "{domain}" not in text

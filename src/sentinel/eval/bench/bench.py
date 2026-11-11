@@ -52,10 +52,10 @@ from sentinel.eval.dataset import (
     write_fixture_index,
 )
 from sentinel.exec.core import live_runner, process
-from sentinel.exec.live import ExecTools, WriteHttpClient, write_connection
+from sentinel.exec.live import ExecTools, write_connection
 from sentinel.exec.live import manifest as exec_manifest
 from sentinel.governance.remediation_store import ExecRequest, MemoryRemediationStore
-from sentinel.sdk import DetectContext, ReadOnlyHttp
+from sentinel.sdk import DetectContext, ReadOnlyHttp, open_read, open_write
 
 DEPLOY = REPO / "deploy"
 CTX = "kind-sentinel"
@@ -232,8 +232,9 @@ def remediate_and_record_post(pack: LoadedPack, spec: ScenarioSpec, fixture: Pat
     )
     m = exec_manifest(pack.manifest.pack)
     url, user, pw = write_connection(m)
-    run = live_runner(lambda: WriteHttpClient(url, user, pw))
-    tools = ExecTools(m, ReadOnlyHttp(url, user, pw))
+    kind = m.connection.kind
+    run = live_runner(lambda: open_write(kind, url, user, pw))
+    tools = ExecTools(m, open_read(kind, url, user, pw))
 
     def submit(kind: str) -> str:
         r = process(

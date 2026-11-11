@@ -2,6 +2,7 @@
 
 负责：读取 sentinel/packs/<名称>/pack.yaml → PackManifest，按 entry 用 importlib 加载工具、检测器和 fact builder；
       读取动作目录的规格（只读规格，不导入执行函数）。
+      discover_packs：扫描 sentinel/packs/ 下有 pack.yaml 的子包（M4 D13 通用化：新增领域不改 core）。
 不负责：发现第三方专家包（entry point 机制，TODO(edge)），以及 pack.yaml 之外的校验。
 """
 
@@ -59,3 +60,9 @@ def load_pack(name: str) -> LoadedPack:
     pack_dir = Path(str(importlib.resources.files(f"sentinel.packs.{name}")))
     actions = load_action_specs(pack_dir, manifest.actions)
     return LoadedPack(manifest, tools, detectors, fact_builders, actions)
+
+
+def discover_packs() -> list[str]:
+    """sentinel/packs/ 下所有带 pack.yaml 的子包名，按名字排序（排序让 AgentVersion 的组件顺序稳定）。"""
+    root = importlib.resources.files("sentinel.packs")
+    return sorted(d.name for d in root.iterdir() if d.is_dir() and d.joinpath("pack.yaml").is_file())

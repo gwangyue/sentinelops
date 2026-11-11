@@ -128,18 +128,19 @@ def process(
     return r
 
 
-def live_runner(make_http: Callable[[], Any]) -> RunAction:
-    """真实执行：按动作规格导入 execute / rollback，传入写连接（只有执行器进程能构造它）。"""
+def live_runner(make_conn: Callable[[], Any]) -> RunAction:
+    """真实执行：按动作规格导入 execute / rollback，传入写连接。
+    写连接只有执行器进程能构造，类型由 connection.kind 决定。"""
 
     def run(spec: ActionSpec, plan: RemediationPlan, kind: str) -> dict[str, Any]:
         entry = spec.execute if kind == "execute" else spec.rollback
         if entry is None:
             raise RuntimeError(f"{spec.id} 没有回滚函数")
-        http = make_http()
+        conn = make_conn()
         try:
-            return dict(resolve_entry(entry)(ExecContext(plan.target, plan.params, plan.precheck_snapshot, http)))
+            return dict(resolve_entry(entry)(ExecContext(plan.target, plan.params, plan.precheck_snapshot, conn)))
         finally:
-            close = getattr(http, "close", None)
+            close = getattr(conn, "close", None)
             if close:
                 close()
 

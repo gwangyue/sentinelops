@@ -30,6 +30,7 @@ from sentinel.core.diagnosis.obs_backend import ObsBackend
 from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack
 from sentinel.core.toolbackend import ToolBackend
+from sentinel.sdk import domain_name
 
 PROMPT = Path(__file__).with_name("prompts") / "diagnose.md"
 UNKNOWN_LABEL = "es.unknown"
@@ -77,10 +78,16 @@ class DiagnoseResult:
     compaction: CompactionRecord  # 写进上下文报告（04 §3.11）；没压缩时 compacted 为空
 
 
-def render_prompt(root_causes: Sequence[RootCauseDecl]) -> str:
+def render_prompt(root_causes: Sequence[RootCauseDecl], domain: str) -> str:
+    """domain：领域的显示名（sdk.domain_name(connection.kind)），例如 Elasticsearch、MySQL。"""
     table = "\n".join(f"- `{r.label}`：{r.description}" for r in root_causes)
     unknown = next((r.label for r in root_causes if r.label.endswith(".unknown")), UNKNOWN_LABEL)
-    return PROMPT.read_text(encoding="utf-8").replace("{root_causes}", table).replace("{unknown_label}", unknown)
+    return (
+        PROMPT.read_text(encoding="utf-8")
+        .replace("{domain}", domain)
+        .replace("{root_causes}", table)
+        .replace("{unknown_label}", unknown)
+    )
 
 
 def tool_name(tool_id: str) -> str:
@@ -126,7 +133,7 @@ def run_diagnosis(
         model=model,
         middleware=[l2],
         tools=lc_tools(pack, backend),
-        system_prompt=render_prompt(pack.manifest.root_causes),
+        system_prompt=render_prompt(pack.manifest.root_causes, domain_name(pack.manifest.connection.kind)),
         backend=CompositeBackend(
             default=StateBackend(), routes={"/obs/": ObsBackend(obs_store, bundle.investigation_id)}
         ),

@@ -3,7 +3,7 @@
 负责：每个动作的前置检查、预演、执行、回滚、验证。
 - 前置检查、预演、验证只用只读工具，而且只用录制时一定录到的调用（无参数的默认调用，或者按索引的调用），
   这样回放模式下也能跑（ADR-003）；
-- 执行、回滚只用执行器传进来的 WriteHttp，回滚按前置检查快照里的原值恢复。
+- 执行、回滚只用执行器传进来的写连接（ctx.conn），回滚按前置检查快照里的原值恢复。
 不负责：谁来调用、审批、幂等（plan 节点和执行器）。
 """
 
@@ -41,7 +41,7 @@ def _explicit(settings: Mapping[str, Any], key: str) -> dict[str, Any]:
 def _restore(ctx: ExecContext, key: str) -> dict[str, Any]:
     before = ctx.precheck_snapshot["before"]
     body = {scope: {key: before.get(scope)} for scope in ("persistent", "transient")}
-    return dict(ctx.http.put("/_cluster/settings", body))
+    return dict(ctx.conn.put("/_cluster/settings", body))
 
 
 def _health(tools: ToolCaller) -> dict[str, Any]:
@@ -66,7 +66,7 @@ def enable_allocation_dry_run(ctx: ActionContext) -> dict[str, Any]:
 
 def enable_allocation_execute(ctx: ExecContext) -> dict[str, Any]:
     # 两处都清空：恢复成默认值 all（transient 优先生效，只清 persistent 不够）
-    return dict(ctx.http.put("/_cluster/settings", {"persistent": {ENABLE: None}, "transient": {ENABLE: None}}))
+    return dict(ctx.conn.put("/_cluster/settings", {"persistent": {ENABLE: None}, "transient": {ENABLE: None}}))
 
 
 def enable_allocation_rollback(ctx: ExecContext) -> dict[str, Any]:
@@ -116,14 +116,14 @@ def raise_watermark_execute(ctx: ExecContext) -> dict[str, Any]:
     # low ≤ high ≤ flood：低水位提高到 want；高水位不低于 want（原来更高就保持原值）
     high = max(want, float(ctx.precheck_snapshot["high"]))
     body = {LOW: f"{want:g}%", LOW_HEADROOM: "200GB", HIGH: f"{high:g}%", HIGH_HEADROOM: "150GB"}
-    return dict(ctx.http.put("/_cluster/settings", {"persistent": body}))
+    return dict(ctx.conn.put("/_cluster/settings", {"persistent": body}))
 
 
 def raise_watermark_rollback(ctx: ExecContext) -> dict[str, Any]:
     # 4 项一起按原样恢复：只恢复水位的话，留下的 headroom 显式值会改变以后的水位计算
     before = ctx.precheck_snapshot["before"]
     body = {scope: {k: before[k].get(scope) for k in WATERMARK_KEYS} for scope in ("persistent", "transient")}
-    return dict(ctx.http.put("/_cluster/settings", body))
+    return dict(ctx.conn.put("/_cluster/settings", body))
 
 
 def green_verify(ctx: ActionContext) -> VerifyResult:
@@ -174,7 +174,7 @@ def _reroute(ctx: ExecContext, moves: list[dict[str, Any]], reverse: bool) -> di
         }
         for m in moves
     ]
-    return dict(ctx.http.post("/_cluster/reroute", {"commands": cmds}))
+    return dict(ctx.conn.post("/_cluster/reroute", {"commands": cmds}))
 
 
 def relocate_execute(ctx: ExecContext) -> dict[str, Any]:
@@ -222,7 +222,7 @@ def shard_limit_dry_run(ctx: ActionContext) -> dict[str, Any]:
 
 def shard_limit_execute(ctx: ExecContext) -> dict[str, Any]:
     return dict(
-        ctx.http.put("/_cluster/settings", {"persistent": {MAX_SHARDS: int(ctx.params["max_shards_per_node"])}})
+        ctx.conn.put("/_cluster/settings", {"persistent": {MAX_SHARDS: int(ctx.params["max_shards_per_node"])}})
     )
 
 
@@ -266,12 +266,12 @@ def set_replicas_dry_run(ctx: ActionContext) -> dict[str, Any]:
 
 def set_replicas_execute(ctx: ExecContext) -> dict[str, Any]:
     body = {"index": {"number_of_replicas": int(ctx.params["replicas"])}}
-    return dict(ctx.http.put(f"/{ctx.params['index']}/_settings", body))
+    return dict(ctx.conn.put(f"/{ctx.params['index']}/_settings", body))
 
 
 def set_replicas_rollback(ctx: ExecContext) -> dict[str, Any]:
     body = {"index": {"number_of_replicas": int(ctx.precheck_snapshot["before"])}}
-    return dict(ctx.http.put(f"/{ctx.params['index']}/_settings", body))
+    return dict(ctx.conn.put(f"/{ctx.params['index']}/_settings", body))
 
 
 def set_replicas_verify(ctx: ActionContext) -> VerifyResult:

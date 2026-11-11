@@ -22,10 +22,13 @@ def _band(value: Any) -> str:
     return str(value).lower()
 
 
-def _object_type(f: Finding, node_subjects: set[str]) -> str:
+def _object_type(f: Finding, kinds: dict[str, str]) -> str:
+    """对象类型不记具体名称（05 §3.2）：没有 object_ref 就是整个目标（记作 cluster）；
+    否则取"主体等于 object_ref 的事实"的键前缀（node.disk_used_pct → node），由专家包的事实键决定，
+    core 不认识具体领域（M4 D13 通用化；ES 推出来的结果和之前写死 node / index 时一样）。"""
     if f.object_ref is None:
         return "cluster"
-    return "node" if f.object_ref in node_subjects else "index"  # TODO(edge): 其他领域的对象类型由专家包声明
+    return kinds.get(f.object_ref, "object")
 
 
 def _change_key(c: Change) -> str:
@@ -40,11 +43,11 @@ def _change_key(c: Change) -> str:
 def build(findings: Sequence[Finding], sheets: Sequence[FactSheet], changes: Sequence[Change]) -> dict[str, list[str]]:
     """返回 MemoryRecord.symptom_fingerprint 的结构（03 §6.4）。"""
     facts = [x for s in sheets for x in s.facts]
-    nodes = {x.subject for x in facts if x.key.startswith("node.")}
+    kinds = {x.subject: x.key.split(".", 1)[0] for x in facts if "." in x.key}
     return {
         "detectors": sorted({f.detector for f in findings}),
         "abnormal_facts": sorted({f"{x.key}:{_band(x.value)}" for x in facts if x.status == "abnormal"}),
-        "objects": sorted({_object_type(f, nodes) for f in findings}),
+        "objects": sorted({_object_type(f, kinds) for f in findings}),
         "changes": sorted({f"{c.tool.split('.', 1)[-1]}:{_change_key(c)}" for c in changes}),
     }
 
