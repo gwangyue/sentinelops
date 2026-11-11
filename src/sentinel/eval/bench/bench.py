@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import yaml
 from ulid import ULID
 
 from sentinel.contracts import (
@@ -55,11 +56,17 @@ from sentinel.exec.core import live_runner, process
 from sentinel.exec.live import ExecTools, write_connection
 from sentinel.exec.live import manifest as exec_manifest
 from sentinel.governance.remediation_store import ExecRequest, MemoryRemediationStore
-from sentinel.sdk import DetectContext, ReadOnlyHttp, open_read, open_write
+from sentinel.sdk import DetectContext, open_read, open_write
 
 DEPLOY = REPO / "deploy"
 CTX = "kind-sentinel"
-TARGET = "es-target"
+TARGET = "es-target"  # ES 的目标名；其他专家包是 <pack>-target（M4 D13）
+
+
+def target_of(pack: str) -> str:
+    return TARGET if pack == "es" else f"{pack}-target"
+
+
 POLL_S = 5
 SCRATCH = REPO / "var" / "bench"  # 故障台自己的观测记录（等症状时的轮询），不进数据集
 
@@ -136,6 +143,20 @@ def _wait(pred: Callable[[], bool], timeout_s: float) -> float | None:
 
 
 def wait_green(pack: LoadedPack, timeout_s: float = 600) -> None:
+    if pack.manifest.pack != "es":
+        # 其他领域没有"集群变绿"这种统一的健康信号：以"没有任何检测器触发"作为健康（M4 D13）
+        t = target_of(pack.manifest.pack)
+
+        def quiet() -> bool:
+            tb = _live(pack)
+            try:
+                return not run_detect(pack, t, tb, load_env(t)).findings
+            finally:
+                tb.close()
+
+        if _wait(quiet, timeout_s) is None:
+            raise BenchError(f"{timeout_s:.0f} 秒内 {t} 仍有检测器触发")
+        return
     expected = load_env(TARGET).get("expected_nodes", 3)
 
     def ok() -> bool:
@@ -150,7 +171,8 @@ def wait_symptom(pack: LoadedPack, spec: ScenarioSpec) -> float | None:
     """等场景声明的检测器触发（03 §6.1 symptom_wait）。返回从注入开始的秒数，超时返回 None。"""
     detector = pack.detectors[spec.symptom_wait.detector]
     wait_nodes = spec.fault.params.get("wait_nodes")
-    env = load_env(TARGET)
+    target = target_of(pack.manifest.pack)
+    env = load_env(target)
 
     def fired() -> bool:
         tb = _live(pack)
@@ -159,7 +181,7 @@ def wait_symptom(pack: LoadedPack, spec: ScenarioSpec) -> float | None:
                 r = tb.call("es.cluster_health")
                 if not r.ok or r.raw["number_of_nodes"] < wait_nodes:
                     return False
-            return bool(detector(DetectContext(pack=pack.manifest.pack, target=TARGET, tools=tb, env=env)))
+            return bool(detector(DetectContext(pack=pack.manifest.pack, target=target, tools=tb, env=env)))
         finally:
             tb.close()
 
@@ -170,12 +192,19 @@ def wait_symptom(pack: LoadedPack, spec: ScenarioSpec) -> float | None:
 SNAPSHOT_TOOLS = ("es.cluster_settings", "es.nodes_info", "es.index_templates")
 
 
+def _snapshot_tools(pack: str) -> list[str]:
+    # 和调查时 L3 用的是同一份配置（config/context_policy.yaml 的 changes.snapshot_tools）；
+    # 直接读文件：故障台属于 eval，不为这一处去扩 core.api（M4 的验收要求 core 零改动）
+    policy = yaml.safe_load((REPO / "config" / "context_policy.yaml").read_text(encoding="utf-8"))
+    return list(policy["changes"]["snapshot_tools"].get(pack, SNAPSHOT_TOOLS))
+
+
 def snapshot(pack: LoadedPack, fixture: Path) -> None:
     """集群健康时录一份快照（phase=before），相当于"上一次巡检"留下的那份（05 §3.5）。"""
     tb = open_backend(pack, f"inv_snap_{ULID()}", Mode.RECORD, ObservationStore(SCRATCH), fixture)
     tb.phase = "before"
     try:
-        for t in SNAPSHOT_TOOLS:
+        for t in _snapshot_tools(pack.manifest.pack):
             tb.call(t)
     finally:
         tb.close()
@@ -183,10 +212,13 @@ def snapshot(pack: LoadedPack, fixture: Path) -> None:
 
 def sweep(pack: LoadedPack, tb: ToolBackend) -> None:
     """录制：检测器和 fact builder 的调用 + 每个工具的默认调用 + 每个非 green 索引的带参调用。"""
-    run_detect(pack, TARGET, tb, load_env(TARGET))
+    target = target_of(pack.manifest.pack)
+    run_detect(pack, target, tb, load_env(target))
     for tid, t in pack.tools.items():
         if t.impl.args_schema is None or not any(f.is_required() for f in t.impl.args_schema.model_fields.values()):
             tb.call(tid)
+    if pack.manifest.pack != "es":
+        return  # 下面是 ES 特有的按索引录制
     # 每个索引都录带参数的调用，不只是非 green 的：flood stage 的只读块出现在 green 的索引上（M2 外部改编场景发现）
     tb.call("es.index_settings", {"index": "*"})
     indices = tb.call("es.cat_indices")
@@ -216,7 +248,7 @@ def remediate_and_record_post(pack: LoadedPack, spec: ScenarioSpec, fixture: Pat
     p = spec.remediation
     action = pack.actions[p.action_id]
     inv = f"inv_bench_{ULID()}"
-    plan, why = build_plan(inv, TARGET, p, action, tb)
+    plan, why = build_plan(inv, target_of(pack.manifest.pack), p, action, tb)
     if plan is None:
         raise BenchError(f"{spec.id}：标准修复 {p.action_id} 的方案没有通过：{why}")
     store = MemoryRemediationStore()
@@ -272,13 +304,15 @@ def remediate_and_record_post(pack: LoadedPack, spec: ScenarioSpec, fixture: Pat
     return f"{p.action_id} 已执行、验证通过（{detail}），post 已录制，已回滚"
 
 
-def _target_version() -> str:
-    c = resolve_credential("es-readonly")
-    http = ReadOnlyHttp(c.url, c.user, c.password)
+def _target_version(pack: LoadedPack) -> str:
+    c = resolve_credential(pack.manifest.connection.read_credential)
+    conn = open_read(pack.manifest.connection.kind, c.url, c.user, c.password)
     try:
-        return str(http.get("/")["version"]["number"])
+        if pack.manifest.connection.kind == "mysql":
+            return str(conn.query("SELECT VERSION() AS v")[0]["v"])
+        return str(conn.get("/")["version"]["number"])
     finally:
-        http.close()
+        conn.close()
 
 
 def inject(pack_name: str, scenario_id: str, *, revert: bool = False) -> float:
@@ -312,7 +346,7 @@ def revert_fault(pack_name: str, scenario_id: str) -> None:
 def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] = print) -> list[str]:
     pack = load_pack(pack_name)
     spec = load_scenarios(pack_name)[scenario_id]
-    version = _target_version()
+    version = _target_version(pack)
     made = []
     for _ in range(n):
         k = next_recording(pack_name, scenario_id)
@@ -346,7 +380,7 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
             scenario_id=scenario_id,
             split=split_for(scenario_id, spec.origin),
             inputs=ExampleInputs(
-                trigger={"kind": "patrol", "target": TARGET}, fixture_ref=str(rel), memory_snapshot=None
+                trigger={"kind": "patrol", "target": target_of(pack_name)}, fixture_ref=str(rel), memory_snapshot=None
             ),
             outputs=ExampleOutputs(**spec.ground_truth.model_dump()),
             metadata=ExampleMetadata(
