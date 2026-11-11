@@ -10,7 +10,10 @@ from typing import Any, Literal, Protocol
 
 from sentinel.contracts import AgentVersion, AuditEvent, Observation
 
-InvestigationStatus = Literal["running", "healthy", "deduplicated", "diagnosed", "escalated", "failed"]
+# awaiting_approval / resolved：修复段（M3）。resolved = 执行并验证通过
+InvestigationStatus = Literal[
+    "running", "healthy", "deduplicated", "diagnosed", "escalated", "failed", "awaiting_approval", "resolved"
+]
 
 
 @dataclass

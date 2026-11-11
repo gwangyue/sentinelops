@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 from ulid import ULID
 
 from sentinel.core.detect import load_env
@@ -20,6 +21,8 @@ from sentinel.core.store import MemoryStore
 from sentinel.core.toolbackend import Mode, ToolBackend
 from sentinel.core.versioning.components import collect_components, load_context_policy
 from sentinel.core.versioning.freeze import freeze, require_frozen
+from sentinel.eval.replay_exec import replay_remediation
+from sentinel.governance.remediation_store import MemoryRemediationStore
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "es"
 PACK = load_pack("es")
@@ -30,7 +33,14 @@ def _must_not_be_called(messages: object) -> Any:
 
 
 class Harness:
-    def __init__(self, tmp: Path, fixture: str, script: Script | None, policy: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        tmp: Path,
+        fixture: str | Path,
+        script: Script | None,
+        policy: dict[str, Any] | None = None,
+        remediate: bool = False,
+    ) -> None:
         self.store = MemoryStore()
         self.obs = ObservationStore(tmp / "obs", index=self.store)
         self.model = ScriptedChatModel(script=script or _must_not_be_called)
@@ -38,8 +48,14 @@ class Harness:
         freeze(self.store, comps, "test version")
         packs = {"es": PACK}
 
+        fx = fixture if isinstance(fixture, Path) else FIX / f"{fixture}.jsonl"
+
         def make_backend(pack: LoadedPack, inv: str) -> ToolBackend:
-            return ToolBackend(pack.tools, self.obs, inv, Mode.REPLAY, fixture=FIX / f"{fixture}.jsonl")
+            return ToolBackend(pack.tools, self.obs, inv, Mode.REPLAY, fixture=fx)
+
+        # 修复段：内存里的修复存储 + 回放执行器（和评测同一套组装，eval/replay_exec.py）
+        self.rem_store = MemoryRemediationStore()
+        self.saver = InMemorySaver()  # run 和 resume 共用：interrupt 之后要能找回同一个线程的状态
 
         self.deps = Deps(
             store=self.store,
@@ -51,14 +67,23 @@ class Harness:
             load_env=load_env,
             policy=policy or load_context_policy(),
         )
+        if remediate:
+            self.deps.remediation = replay_remediation(
+                self.rem_store, PACK.actions, lambda inv: self.deps.backend(PACK, inv)
+            )
 
-    def run(self) -> InvState:
+    def run(self, mode: str = "report_only") -> InvState:
         inv = f"inv_{ULID()}"
-        g = build_graph(self.deps, InMemorySaver())
+        g = build_graph(self.deps, self.saver)
         out: InvState = g.invoke(
-            {"inv_id": inv, "target": "es-target", "pack": "es", "mode": "report_only"},
+            {"inv_id": inv, "target": "es-target", "pack": "es", "mode": mode},  # type: ignore[typeddict-item]
             {"configurable": {"thread_id": inv}},
         )
+        return {**out, "inv_id": inv}
+
+    def resume(self, inv: str) -> InvState:
+        g = build_graph(self.deps, self.saver)
+        out: InvState = g.invoke(Command(resume={"resumed": True}), {"configurable": {"thread_id": inv}})
         return out
 
     def audit_types(self, inv: str) -> list[str]:
@@ -67,4 +92,6 @@ class Harness:
 
 @pytest.fixture
 def harness(tmp_path: Path) -> Callable[..., Harness]:
-    return lambda fixture, script=None, policy=None: Harness(tmp_path, fixture, script, policy)
+    return lambda fixture, script=None, policy=None, remediate=False: Harness(
+        tmp_path, fixture, script, policy, remediate
+    )

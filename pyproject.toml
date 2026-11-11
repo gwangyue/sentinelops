@@ -33,6 +33,7 @@ dev = [
     "pytest>=8.3",
     "pytest-socket>=0.7",
     "import-linter>=2.1",
+    "types-jsonschema>=4.26.0.20261006",
 ]
 
 [build-system]

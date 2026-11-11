@@ -1,21 +1,31 @@
-"""调查图的只读路径（02 §1；08 M1 D3）：intake → detect → route → build_context → diagnose → report。
+"""调查图（02 §1）：intake → detect → route → build_context → diagnose → report；
+修复模式在 diagnose 和 report 之间加上 plan → approve → execute → verify。
 
-负责：节点之间的流转、每个节点的审计事件、调查记录的状态。图本身是确定性的，只有 diagnose 调用 LLM。
-不负责：plan / approve / execute / verify / confirm（M3）。D3 的图里没有 interrupt()。
+负责：节点之间的流转、每个节点的审计事件、调查记录的状态。图本身是确定性的，只有 diagnose 和 plan 调用 LLM。
+修复段（plan 之后）的逻辑在 remediate.py；只有 mode=remediate 并且 Deps 里有 remediation 时才会走到。
+不负责：confirm 和写记忆（M3 D12）。
 状态里只放 JSON（契约模型的 model_dump），这样 checkpointer 能序列化。
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from sentinel.contracts import AgentVersion, ContextBundle, FactSheet, Finding
+from sentinel.contracts import (
+    AgentVersion,
+    ContextBundle,
+    Diagnosis,
+    FactSheet,
+    Finding,
+    RemediationPlan,
+)
 from sentinel.core.context.build import build_context
 from sentinel.core.context.changes import Change, ReplaySnapshots, StoreSnapshots, collect_changes
 from sentinel.core.context.knowledge_layer import KnowledgeRetriever, NoKnowledge
@@ -23,6 +33,19 @@ from sentinel.core.context.memory_layer import MemoryProvider, NoMemory
 from sentinel.core.detect import run_detect
 from sentinel.core.diagnosis.agent import BudgetExceeded, run_diagnosis
 from sentinel.core.diagnosis.evidence import check_evidence, support_rate
+from sentinel.core.graph.remediate import (
+    NO_ACTION,
+    Remediation,
+    build_plan,
+    check_approval,
+    execution_keys,
+    parse_proposal,
+    plan_prompt_message,
+    request_approval,
+    run_verify,
+    validate_proposal,
+    wait_approval,
+)
 from sentinel.core.llm.chat import run_tags
 from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack
@@ -38,7 +61,7 @@ class InvState(TypedDict, total=False):
     inv_id: str
     target: str
     pack: str
-    mode: Literal["report_only"]
+    mode: Literal["report_only", "remediate"]
     agent_version: str
     findings: list[dict[str, Any]]
     fact_sheets: list[dict[str, Any]]
@@ -49,6 +72,13 @@ class InvState(TypedDict, total=False):
     model_calls: int
     changes: list[dict[str, Any]]  # L3：和上一次快照比较得到的变更
     deduplicated: bool  # 本次的问题事件 30 分钟内都已经调查过
+    # 修复段（M3）
+    proposal: dict[str, Any] | None  # ActionProposal：LLM 的提议（不含任何安全字段）
+    plan: dict[str, Any] | None  # RemediationPlan：确定性代码组装
+    approval_id: str | None
+    execution: dict[str, Any] | None  # ExecutionResult
+    unsafe_proposals: int
+    remediation: str | None  # 修复段的结局：resolved / no_action / unsafe / plan_failed / rejected / expired / ...
 
 
 @dataclass
@@ -65,6 +95,7 @@ class Deps:
     policy: dict[str, Any]
     knowledge: KnowledgeRetriever = field(default_factory=NoKnowledge)  # L4（04 §3.5）
     memory: MemoryProvider = field(default_factory=NoMemory)  # L5 接口；记忆服务在 D7–D8
+    remediation: Remediation | None = None  # 修复段（M3）；没有时 mode=remediate 也只出报告
     _backends: dict[str, ToolBackend] = field(default_factory=dict)
 
     def backend(self, pack: LoadedPack, inv_id: str) -> ToolBackend:
@@ -224,15 +255,118 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
             "model_calls": state.get("model_calls", 0) + res.model_calls,
         }
 
+    # ---------- 修复段（02 §1；remediate.py） ----------
+
+    def plan(state: InvState) -> InvState:
+        assert deps.remediation is not None
+        pack = deps.packs[state["pack"]]
+        d = Diagnosis.model_validate(state["diagnosis"])
+        msg = deps.make_model("diagnosis").invoke(
+            plan_prompt_message(pack.actions, d),
+            cast(RunnableConfig, run_tags("plan", state["agent_version"], state["inv_id"])),
+        )
+        calls = state.get("model_calls", 0) + 1
+        p = parse_proposal(str(msg.text))
+        if p is not None and p.action_id == NO_ACTION:
+            audit(state, "plan.proposed", {"action": None, "reason": "动作目录里没有合适的动作"})
+            return {"model_calls": calls, "proposal": p.model_dump(mode="json"), "remediation": "no_action"}
+        why = "模型的输出不是合法的 ActionProposal" if p is None else validate_proposal(p, pack.actions)
+        if why is not None:
+            # 03 §4.3：不在白名单、参数通不过校验 → 一次不安全提议，直接升级给人
+            audit(state, "plan.rejected_unsafe", {"reason": why, "proposal": p.model_dump(mode="json") if p else None})
+            return {
+                "model_calls": calls,
+                "proposal": p.model_dump(mode="json") if p else None,
+                "unsafe_proposals": state.get("unsafe_proposals", 0) + 1,
+                "remediation": "unsafe",
+                "escalate_reason": f"unsafe_proposal: {why}",
+            }
+        assert p is not None
+        built, reason = build_plan(
+            state["inv_id"], state["target"], p, pack.actions[p.action_id], deps.backend(pack, state["inv_id"])
+        )
+        if built is None:
+            audit(state, "plan.proposed", {"action": p.action_id, "params": p.params, "rejected": reason})
+            return {
+                "model_calls": calls,
+                "proposal": p.model_dump(mode="json"),
+                "remediation": "plan_failed",
+                "escalate_reason": f"plan: {reason}",
+            }
+        req = request_approval(deps.remediation.store, built, deps.remediation.approval_ttl)
+        audit(
+            state,
+            "plan.proposed",
+            {
+                "plan_id": built.id,
+                "action": built.action_id,
+                "params": built.params,
+                "plan_hash": built.plan_hash,
+                "dry_run": built.dry_run_result,
+            },
+        )
+        audit(
+            state,
+            "approval.requested",
+            {"approval_id": req.id, "plan_hash": req.plan_hash, "expires_at": req.expires_at.isoformat()},
+        )
+        deps.store.update_investigation(state["inv_id"], status="awaiting_approval", diagnosis=state["diagnosis"])
+        return {
+            "model_calls": calls,
+            "proposal": p.model_dump(mode="json"),
+            "plan": built.model_dump(mode="json"),
+            "approval_id": req.id,
+        }
+
+    def approve(state: InvState) -> InvState:
+        # 只有 interrupt（02 §3.4）：恢复时带回来的值不用，审批结果在 execute 节点里从存储读
+        wait_approval(str(state["approval_id"]))
+        return {}
+
+    def execute(state: InvState) -> InvState:
+        assert deps.remediation is not None
+        plan = RemediationPlan.model_validate(state["plan"])
+        ok, event, _ = check_approval(deps.remediation.store, str(state["approval_id"]), datetime.now(UTC))
+        if not ok:
+            if event == "approval.expired":
+                audit(state, "approval.expired", {"approval_id": state["approval_id"]})
+            outcome = "expired" if event == "approval.expired" else "rejected"
+            return {"remediation": outcome}
+        r = deps.remediation.executor("execute", plan.id, str(state["approval_id"]), execution_keys(plan, "execute"))
+        if r.status in ("succeeded", "duplicate"):
+            return {"execution": r.model_dump(mode="json")}
+        not_recorded = "PostNotRecorded" in str(r.output.get("error", ""))
+        return {
+            "execution": r.model_dump(mode="json"),
+            "remediation": "not_recorded" if not_recorded else f"exec_{r.status}",
+            "escalate_reason": None if not_recorded else f"execution: {r.status} {r.output}",
+        }
+
+    def verify(state: InvState) -> InvState:
+        assert deps.remediation is not None
+        pack = deps.packs[state["pack"]]
+        plan = RemediationPlan.model_validate(state["plan"])
+        spec = pack.actions[plan.action_id]
+        passed, detail = run_verify(spec, plan, deps.backend(pack, state["inv_id"]), deps.remediation.verify_once)
+        audit(state, "verify.passed" if passed else "verify.failed", {"plan_id": plan.id, "detail": detail})
+        if passed:
+            return {"remediation": "resolved"}
+        # 验证失败就回滚（02 §3.4"不让 LLM 临场想办法补救"），然后升级给人
+        rb = deps.remediation.executor("rollback", plan.id, str(state["approval_id"]), execution_keys(plan, "rollback"))
+        return {
+            "remediation": "rolled_back" if rb.rolled_back else "rollback_failed",
+            "escalate_reason": f"verify_failed: {detail}",
+        }
+
     def report(state: InvState) -> InvState:
         escalated = state.get("escalate_reason") is not None
-        status = "escalated" if escalated else "diagnosed"
+        status = "escalated" if escalated else "resolved" if state.get("remediation") == "resolved" else "diagnosed"
         deps.store.update_investigation(
             state["inv_id"], status=status, diagnosis=state["diagnosis"], escalate_reason=state.get("escalate_reason")
         )
         if escalated:
             audit(state, "investigation.escalated", {"reason": state["escalate_reason"]})
-        audit(state, "investigation.closed", {"outcome": status})
+        audit(state, "investigation.closed", {"outcome": status, "remediation": state.get("remediation")})
         return {"status": status}
 
     g = StateGraph(InvState)
@@ -244,6 +378,10 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         ("route", route),
         ("build_context", context),
         ("diagnose", diagnose),
+        ("plan", plan),
+        ("approve", approve),
+        ("execute", execute),
+        ("verify", verify),
         ("report", report),
     ]:
         g.add_node(name, fn)
@@ -258,7 +396,27 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
     g.add_edge("deduplicated", END)
     g.add_edge("route", "build_context")
     g.add_edge("build_context", "diagnose")
-    g.add_edge("diagnose", "report")  # 只报告模式：诊断之后直接出报告；plan 节点在 M3
+    # 修复模式、有修复段依赖、诊断没有升级时才进入 plan；巡检（只报告）诊断之后直接出报告（02 §2）
+    g.add_conditional_edges(
+        "diagnose",
+        lambda s: (
+            "plan"
+            if s["mode"] == "remediate"
+            and deps.remediation is not None
+            and s.get("diagnosis")
+            and not s.get("escalate_reason")
+            else "report"
+        ),
+        ["plan", "report"],
+    )
+    g.add_conditional_edges("plan", lambda s: "approve" if s.get("approval_id") else "report", ["approve", "report"])
+    g.add_edge("approve", "execute")
+    g.add_conditional_edges(
+        "execute",
+        lambda s: "verify" if s.get("execution") and not s.get("remediation") else "report",
+        ["verify", "report"],
+    )
+    g.add_edge("verify", "report")
     g.add_edge("report", END)
     return g.compile(checkpointer=checkpointer)
 

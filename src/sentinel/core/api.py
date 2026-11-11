@@ -11,7 +11,8 @@ from sentinel.core.credentials import resolve as resolve_credential
 from sentinel.core.detect import DetectResult, load_env, run_detect
 from sentinel.core.diagnosis.evidence import ClaimCheck, check_evidence, support_rate
 from sentinel.core.graph.investigation import InvState
-from sentinel.core.graph.run import current_version, investigate, load_packs, make_deps, patrol
+from sentinel.core.graph.remediate import Remediation
+from sentinel.core.graph.run import current_version, investigate, load_packs, make_deps, patrol, resume
 from sentinel.core.llm.chat import chat_model
 from sentinel.core.llm.config import load_models_config
 from sentinel.core.llm.embed import embed
@@ -44,6 +45,7 @@ __all__ = [
     "MemoryStore",
     "Mode",
     "ObservationStore",
+    "Remediation",
     "Store",
     "StoreMemoryProvider",
     "ToolBackend",
@@ -64,6 +66,7 @@ __all__ = [
     "open_store",
     "patrol",
     "resolve_credential",
+    "resume",
     "run_detect",
     "support_rate",
     "write_confirmed",
