@@ -99,8 +99,10 @@ def record_confirmation(
 ) -> AuditEvent:
     """人确认根因（CLI `investigations confirm`）。--root-cause H1：确认某个假设；--label：直接给出根因。
     给出的根因和 H1 不同就是"修正"（rootcause.corrected，记忆里 corrected=true，05 §3.1"这类记忆最有价值"）。"""
-    by_id = {h.id: h for h in diagnosis.hypotheses}
+    # 假设 ID 不区分大小写：模型有时写成 h1（M3 D12 在 kind 上实测）
+    by_id = {h.id.upper(): h for h in diagnosis.hypotheses}
     if hypothesis is not None:
+        hypothesis = hypothesis.upper()
         if hypothesis not in by_id:
             raise ValueError(f"诊断里没有假设 {hypothesis}（有 {', '.join(by_id)}）")
         label = by_id[hypothesis].root_cause_label
