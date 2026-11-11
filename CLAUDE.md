@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：M3 完成（tag `m3`；kind 上 UC2 全链路跑通，golden-demo 第 1–9 步通过）。下一步：M3 报告 §9 的决定（更难的场景），然后 M4
-- 最新版本：v35（M3 发布版本；L3 开，L4、L5 不上线，见 datasets/version_decisions.yaml）· 最新数据集标签：ds-20261111-1（es，17 个场景 34 条，有标准修复的 11 个场景带 post 阶段）· 事故流：datasets/streams/es.yaml（基于 ds-20261110-6）
+- 里程碑：M4 进行中。D13 完成：通用化（tag `m4-base`，core/exec 相对 m3 有改动）+ MySQL 专家包（相对 m4-base，core/exec 零改动）。下一步 D14（周报、MCP 可选）
+- 最新版本：v39（L3 开，L4、L5 不上线；es + mysql 两个专家包）· 数据集标签：es `ds-20261111-1`（17 个场景 34 条）、mysql `ds-20261111-2`（3 个场景 6 条）· 事故流：datasets/streams/es.yaml

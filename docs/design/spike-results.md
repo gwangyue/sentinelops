@@ -470,3 +470,38 @@ LangSmith 记录的费用约为每次调查 0.008 美元。样本只有几次，
 - 去重窗口（30 分钟）在演示里挡了两次：同一个故障短时间内重复巡检会被去重，这是设计内的行为，验收要隔开 30 分钟。
 - 修复之后的"临时"设置不会自动恢复：验收时手动恢复了水位。谁、什么时候恢复临时设置，是 M4 周报里"需要你决定的事"的候选。
 - 版本：v32（D12）、v33（CLI 修复）、v34（演示，L5 开，不发布）、v35（**M3 发布版本**）。
+
+## M4 D13（2026-11-11）：通用化 + MySQL 专家包
+
+**第一步：通用化提交（tag `m4-base`）**。m3 的 core / exec 里有 4 处写死了 ES，"MySQL 零改动"按原样做不到。按你的决定，先做一次只改这 4 处的提交，再从它开始算零改动：
+
+| 写死的地方 | 改成 |
+|---|---|
+| `PACKS = ("es",)`；知识层写死 `"es"` | `discover_packs()` 扫描 `sentinel/packs/*/pack.yaml`；知识层按专家包分派 |
+| core 只建 `ReadOnlyHttp`，执行器只有 `WriteHttpClient` | sdk 的连接注册表 `connect.py`（`connection.kind` → 只读 / 写连接 / 显示名）；执行器加载所有有写凭证的专家包，按方案所属的专家包取连接 |
+| 提示词里的"Elasticsearch 运维专家" | `{domain}`；ES 渲染出的两份提示词和 m3 **逐字相同**（脚本比对） |
+| 记忆指纹的对象类型只认 node / index | 由事实键前缀推出；ES 的结果不变 |
+
+相对 m3：core / exec 13 个文件，+121 / −75 行。v36 修复模式评测：48/48、top1 1.00、不安全提议 0，没有退步。
+
+**第二步：MySQL 专家包**（相对 `m4-base`，`git diff --stat m4-base..HEAD -- src/sentinel/core src/sentinel/exec` **为空**）：
+- 5 个只读工具（全局状态、全局变量、会话列表、InnoDB 事务、锁等待；会话和事务都不取 SQL 原文）、3 个检测器（连接使用率、锁等待、主库只读）、1 个动作（`mysql.raise_max_connections_temporarily`，`SET GLOBAL`，最多 2 倍）、3 个场景。
+- sdk 新增 `ReadOnlySql`（只有 `query`，会话设成 READ ONLY 事务）和 `WriteSql`；新增依赖 pymysql。
+- kind 上部署 MySQL 8.4.3；账号 `sentinel-ro`（PROCESS + performance_schema 的 SELECT）、`sentinel-exec`（只有 SYSTEM_VARIABLES_ADMIN）。
+
+**结果**（v38/v39，`ds-20261111-2`，`sentinel-mysql`：dev 2 / heldout 4 条）：
+
+| 检查 | 结果 |
+|---|---|
+| 报告模式 dev / heldout | top1 1.00 / 1.00（6 / 12 次运行） |
+| 修复模式 | 不安全提议 0；connections_exhausted 6/6 resolved；lock_wait、read_only 每次都选"不动作"（动作目录里没有杀会话、关只读——按设计交给人）；门槛通过 |
+| kind 上 UC2 | 注入 → 方案 `{max_connections: 100}` → 审批 → 执行器（只加载了有写凭证的 mysql）`SET GLOBAL` → 验证 → 确认 → 记忆 `mem_01M74HA4…` |
+| 权限边界 | 只读账号：读不到业务表、不能 SET GLOBAL；执行器：读不到、改不了业务表，不能删库、建用户 |
+
+**怎么读**：零改动的验收是在 m4-base 之后才成立的，m3 的扩展点不完整——这本身就是这一步最有价值的发现。MySQL 只有 3 个场景，dev 只有 1 个（按 hash 分配，不改名字凑比例），结果只证明"跑得通"，不证明"诊断得好"。
+
+**这一段的发现**：
+- **MySQL 权限粒度不够细**：`SYSTEM_VARIABLES_ADMIN` 不能限定到某一个变量，执行器账号也能改 `read_only`（实测）。动作目录里没有这个动作，执行器只按规格执行；但权限本身收不到更窄（写进 01 §6）。
+- **在 Pod 里起几十个 mysql 客户端会把 MySQL 撑到 OOMKill**（512Mi 限制下 2 次）：改成本机一个进程持有连接；内存上限提高到 768Mi。
+- **CLI 里还有两处写死 es**（`approvals show`、`investigations confirm`），MySQL 演示时报错——CLI 不在零改动的范围内，但说明"通用化"只扫了 core / exec 还不够。
+- 版本：v36（通用化）、v37（MySQL 专家包）、v38（故障台）、v39（CLI，**当前版本**）。
