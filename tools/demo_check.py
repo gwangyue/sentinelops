@@ -159,8 +159,72 @@ def step6_approve_execute_verify() -> tuple[Status, str]:
     if decided != executed:
         return Status.FAIL, "执行器记录的 plan_hash 和审批时的不一致"
     keys = list(h.rem_store.executions)
-    if len(keys) != len(set(keys)) or out.get("status") != "resolved":
+    if len(keys) != len(set(keys)) or out.get("remediation") != "resolved":
         return Status.FAIL, f"幂等键重复或没有解决：{keys} {out.get('status')}"
+    return Status.PASS, ""
+
+
+def _confirmed():  # type: ignore[no-untyped-def]
+    """第 6 步走完之后，人确认 H1，写入记忆。返回 (harness, 调查 ID, 恢复之后的状态)。"""
+    h, s = _remediation_run()
+    h.decide("approved")
+    h.resume(s["inv_id"])
+    h.confirm(s["inv_id"])
+    return h, s["inv_id"], h.resume(s["inv_id"])
+
+
+def step7_confirm_memorize() -> tuple[Status, str]:
+    """审计中有 rootcause.confirmed → memory.written；
+    记忆的 source_investigations 包含本次调查（golden-demo 第 7 步）。"""
+    h, inv, out = _confirmed()
+    types = h.audit_types(inv)
+    if "rootcause.confirmed" not in types or "memory.written" not in types:
+        return Status.FAIL, f"审计里缺少事件：{types}"
+    if types.index("rootcause.confirmed") > types.index("memory.written"):
+        return Status.FAIL, "memory.written 出现在 rootcause.confirmed 之前"
+    m = h.mem_index.get(str(out.get("memory_id")))
+    if m is None or inv not in m.record.source_investigations:
+        return Status.FAIL, f"记忆不存在，或者 source_investigations 不包含 {inv}"
+    return Status.PASS, ""
+
+
+def step8_memory_reused() -> tuple[Status, str]:
+    """再次遇到同类故障：第二次调查的 L5 包含 mem_x；H1 的 from_memory 包含 mem_x（不检查步数）。
+    用的是打开 L5 的演示配置（M-E1 之后 L5 没有上线，第 8 步按人的决定用演示版本，见 version_decisions.yaml）。"""
+    import re
+    import tempfile
+
+    from tests.flows.scripts import diagnose_script
+    from tests.harness import Harness
+    from tests.unit.test_memory import fake_embed
+
+    from sentinel.core.memory.policy import load_memory_policy
+    from sentinel.core.memory.provider import StoreMemoryProvider
+    from sentinel.core.versioning.components import load_context_policy
+
+    h1, _, out = _confirmed()
+    mem_x = str(out.get("memory_id"))
+    policy = load_context_policy()
+    policy = {**policy, "layers": {**policy["layers"], "L5": True}}
+    base = diagnose_script()
+    seen: dict[str, str] = {}
+
+    def script(messages):  # type: ignore[no-untyped-def]
+        msg = base(messages)
+        ids = re.findall(r'<memory id="(mem_[0-9A-Z]+)"', "\n".join(str(m.content) for m in messages))
+        if ids and msg.tool_calls and msg.tool_calls[0]["name"] == "DiagnosisOutput":
+            msg.tool_calls[0]["args"]["hypotheses"][0]["from_memory"] = [ids[0]]
+            seen["ref"] = ids[0]
+        return msg
+
+    h2 = Harness(Path(tempfile.mkdtemp()), "disk_watermark", script, policy)  # 新的存储：避开 30 分钟去重
+    h2.deps.memory = StoreMemoryProvider(h1.mem_index, None, load_memory_policy(), fake_embed)
+    s2 = h2.run()
+    l5 = [i["ref"] for i in s2["bundle"]["items"] if i["layer"] == "L5" and i["included"]]
+    if mem_x not in l5:
+        return Status.FAIL, f"第二次调查的 L5 不包含 {mem_x}：{l5}"
+    if mem_x not in s2["diagnosis"]["hypotheses"][0]["from_memory"]:
+        return Status.FAIL, "H1 的 from_memory 不包含 mem_x"
     return Status.PASS, ""
 
 
@@ -202,6 +266,8 @@ CHECKS[3] = step3_diagnosis
 CHECKS[4] = step4_context_report
 CHECKS[5] = step5_plan
 CHECKS[6] = step6_approve_execute_verify
+CHECKS[7] = step7_confirm_memorize
+CHECKS[8] = step8_memory_reused
 CHECKS[9] = step9_curve_and_ablation
 
 

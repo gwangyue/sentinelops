@@ -1,9 +1,10 @@
 """调查图（02 §1）：intake → detect → route → build_context → diagnose → report；
-修复模式在 diagnose 和 report 之间加上 plan → approve → execute → verify。
+修复模式在 diagnose 和 report 之间加上 plan → approve → execute → verify；
+验证通过之后再 confirm → memorize（confirm.py）。
 
 负责：节点之间的流转、每个节点的审计事件、调查记录的状态。图本身是确定性的，只有 diagnose 和 plan 调用 LLM。
 修复段（plan 之后）的逻辑在 remediate.py；只有 mode=remediate 并且 Deps 里有 remediation 时才会走到。
-不负责：confirm 和写记忆（M3 D12）。
+不负责：记忆的检索和合并规则（core/memory/）。
 状态里只放 JSON（契约模型的 model_dump），这样 checkpointer 能序列化。
 """
 
@@ -33,6 +34,7 @@ from sentinel.core.context.memory_layer import MemoryProvider, NoMemory
 from sentinel.core.detect import run_detect
 from sentinel.core.diagnosis.agent import BudgetExceeded, run_diagnosis
 from sentinel.core.diagnosis.evidence import check_evidence, support_rate
+from sentinel.core.graph.confirm import Memorizer, latest_confirmation, memorize, wait_confirmation
 from sentinel.core.graph.remediate import (
     NO_ACTION,
     Remediation,
@@ -79,6 +81,7 @@ class InvState(TypedDict, total=False):
     execution: dict[str, Any] | None  # ExecutionResult
     unsafe_proposals: int
     remediation: str | None  # 修复段的结局：resolved / no_action / unsafe / plan_failed / rejected / expired / ...
+    memory_id: str | None  # 确认之后写入的记忆（M3 D12）
 
 
 @dataclass
@@ -96,6 +99,7 @@ class Deps:
     knowledge: KnowledgeRetriever = field(default_factory=NoKnowledge)  # L4（04 §3.5）
     memory: MemoryProvider = field(default_factory=NoMemory)  # L5 接口；记忆服务在 D7–D8
     remediation: Remediation | None = None  # 修复段（M3）；没有时 mode=remediate 也只出报告
+    memorizer: Memorizer | None = None  # 确认段（M3 D12）；没有时验证通过就直接出报告（评测里没有人来确认）
     _backends: dict[str, ToolBackend] = field(default_factory=dict)
 
     def backend(self, pack: LoadedPack, inv_id: str) -> ToolBackend:
@@ -362,6 +366,31 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
             "escalate_reason": f"verify_failed: {detail}",
         }
 
+    # ---------- 确认段（02 §1；05 §3.1；confirm.py） ----------
+
+    def confirm(state: InvState) -> InvState:
+        wait_confirmation(state["inv_id"])
+        return {}
+
+    def memorize_node(state: InvState) -> InvState:
+        assert deps.memorizer is not None
+        c = latest_confirmation(deps.store.audit_events(state["inv_id"]))
+        if c is None:
+            # 02 §3.4"不确认也可以结束"：不写记忆
+            return {"memory_id": None}
+        pack = deps.packs[state["pack"]]
+        mem = memorize(
+            deps.memorizer,
+            inv_id=state["inv_id"],
+            state=dict(state),
+            confirmation=c,
+            descriptions={r.label: r.description for r in pack.manifest.root_causes},
+            # TODO(edge)：目标系统版本由专家包提供（ES 从 nodes_info 读）；现在只从环境配置里读
+            target_version=str(deps.load_env(state["target"]).get("version", "unknown")),
+            audit=lambda t, p: audit(state, t, p),
+        )
+        return {"memory_id": mem}
+
     def report(state: InvState) -> InvState:
         escalated = state.get("escalate_reason") is not None
         status = "escalated" if escalated else "resolved" if state.get("remediation") == "resolved" else "diagnosed"
@@ -370,7 +399,11 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         )
         if escalated:
             audit(state, "investigation.escalated", {"reason": state["escalate_reason"]})
-        audit(state, "investigation.closed", {"outcome": status, "remediation": state.get("remediation")})
+        audit(
+            state,
+            "investigation.closed",
+            {"outcome": status, "remediation": state.get("remediation"), "memory": state.get("memory_id")},
+        )
         return {"status": status}
 
     g = StateGraph(InvState)
@@ -386,6 +419,8 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         ("approve", approve),
         ("execute", execute),
         ("verify", verify),
+        ("confirm", confirm),
+        ("memorize", memorize_node),
         ("report", report),
     ]:
         g.add_node(name, fn)
@@ -420,7 +455,14 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         lambda s: "verify" if s.get("execution") and not s.get("remediation") else "report",
         ["verify", "report"],
     )
-    g.add_edge("verify", "report")
+    # 修好了也不代表根因判断对：验证通过之后再等人确认根因，确认过的才写记忆（02 §3.4；05 §3.1）
+    g.add_conditional_edges(
+        "verify",
+        lambda s: "confirm" if s.get("remediation") == "resolved" and deps.memorizer is not None else "report",
+        ["confirm", "report"],
+    )
+    g.add_edge("confirm", "memorize")
+    g.add_edge("memorize", "report")
     g.add_edge("report", END)
     return g.compile(checkpointer=checkpointer)
 

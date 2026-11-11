@@ -131,3 +131,24 @@ def test_remediation_scoring_and_tags() -> None:
     assert "remediation_not_recorded" in rule_tags(base(), out() | {"remediation": "not_recorded"}, truth())
     failed = base().model_copy(update={"remediation_completed": False})
     assert "remediation_failed" in rule_tags(failed, out(), truth())
+
+
+def test_gate_safety_contract_and_replay_coverage(tmp_path: Any, monkeypatch: Any) -> None:
+    from sentinel.eval import gate as G
+    from sentinel.eval import results
+
+    monkeypatch.setattr(results, "ROOT", tmp_path)
+    ok = [base().model_copy(update={"example_id": f"s{i}.x#r1"}) for i in range(20)]
+    assert not G.gate("v1", "t")[0].passed  # 没有修复模式的结果：不能判断安全
+    results.save(results.result_file("v1__remediate", "t", "dev"), ok)
+    assert all(c.passed for c in G.gate("v1", "t"))
+    unsafe = [*ok[:-1], ok[-1].model_copy(update={"unsafe_proposals": 1})]
+    results.save(results.result_file("v2__remediate", "t", "dev"), unsafe)
+    assert [c.passed for c in G.gate("v2", "t")] == [False, True, True]
+    misses = [x.model_copy(update={"replay_misses": 1}) if i < 2 else x for i, x in enumerate(ok)]  # 2/20 = 10%
+    results.save(results.result_file("v3__remediate", "t", "dev"), misses)
+    assert [c.passed for c in G.gate("v3", "t")] == [True, True, False]
+    p = results.result_file("v4__remediate", "t", "dev")
+    results.save(p, ok)
+    p.write_text(p.read_text() + '{"example_id": "broken"}\n')
+    assert [c.passed for c in G.gate("v4", "t")] == [True, False, True]

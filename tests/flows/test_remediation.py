@@ -64,7 +64,10 @@ def test_full_path_resolves(harness: H, tmp_path: Path) -> None:
     assert not h.rem_store.executions
     approve(h)
     out = h.resume(s["inv_id"])
-    assert out["status"] == "resolved" and out["remediation"] == "resolved"
+    assert "__interrupt__" in out and out["remediation"] == "resolved"  # 修好了，停在 confirm 等人确认根因
+    h.confirm(s["inv_id"])
+    out = h.resume(s["inv_id"])
+    assert out["status"] == "resolved" and out["memory_id"]
     types = h.audit_types(s["inv_id"])
     i = types.index
     # golden-demo 第 6 步的顺序；执行器的 action.executed 和调查在同一条审计链上
@@ -154,3 +157,49 @@ def test_executor_refuses_when_frozen_after_approval(harness: H, tmp_path: Path)
     assert out["remediation"] == "exec_precheck_failed" and not h.rem_store.executions
     ev = [e for e in h.store.audit_events(s["inv_id"]) if e.type == "action.precheck_failed"]
     assert ev and ev[0].payload["stage"] == "frozen"
+
+
+def _to_confirm(harness: H, tmp_path: Path) -> tuple[Harness, str]:
+    h: Harness = harness(fixture(tmp_path), with_plan(GOOD), remediate=True)
+    s = h.run("remediate")
+    approve(h)
+    h.resume(s["inv_id"])
+    return h, s["inv_id"]
+
+
+def test_confirmed_root_cause_is_memorized(harness: H, tmp_path: Path) -> None:
+    h, inv = _to_confirm(harness, tmp_path)
+    h.confirm(inv)
+    out = h.resume(inv)
+    m = h.mem_index.get(out["memory_id"])
+    assert m is not None and inv in m.record.source_investigations and not m.record.corrected
+    assert m.record.root_cause_label == "es.disk_high_watermark" and m.record.action_taken == RAISE
+    assert m.record.outcome == "resolved" and m.record.confirmed_by == "human:t"
+    types = h.audit_types(inv)
+    assert types.index("rootcause.confirmed") < types.index("memory.written")  # golden-demo 第 7 步
+
+
+def test_corrected_root_cause_marks_memory(harness: H, tmp_path: Path) -> None:
+    h, inv = _to_confirm(harness, tmp_path)
+    h.confirm(inv, label="es.shard_limit_reached")  # 人修正：和 H1 不同
+    out = h.resume(inv)
+    m = h.mem_index.get(out["memory_id"])
+    assert m is not None and m.record.corrected and m.record.root_cause_label == "es.shard_limit_reached"
+    assert "rootcause.corrected" in h.audit_types(inv)
+
+
+def test_declined_confirmation_writes_nothing(harness: H, tmp_path: Path) -> None:
+    h, inv = _to_confirm(harness, tmp_path)
+    out = h.resume(inv)  # 没有确认就恢复（CLI --decline）
+    assert out["status"] == "resolved" and out["memory_id"] is None and not h.mem_index.items
+    assert "memory.written" not in h.audit_types(inv)
+
+
+def test_confirmation_rejects_unknown_labels(harness: H, tmp_path: Path) -> None:
+    import pytest
+
+    h, inv = _to_confirm(harness, tmp_path)
+    with pytest.raises(ValueError):
+        h.confirm(inv, label="es.made_up")
+    with pytest.raises(ValueError):
+        h.confirm(inv, hypothesis="H9")

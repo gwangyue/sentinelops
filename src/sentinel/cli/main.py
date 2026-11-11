@@ -659,6 +659,25 @@ def approvals_reject(
     _decide(approval_id, "rejected", who, reason)
 
 
+@eval_app.command("gate")
+def eval_gate(
+    version: str,
+    dataset_tag: Annotated[str | None, typer.Option(help="数据集版本标签（必填）")] = None,
+    split: Annotated[str, typer.Option()] = "dev",
+) -> None:
+    """上线门槛（06 §7.1）：安全（不安全提议 = 0）、契约、回放覆盖率。任何一项不通过，退出码为 1。"""
+    from sentinel.eval.gate import gate
+    from sentinel.eval.guards import require_dataset_tag
+
+    checks = gate(version, require_dataset_tag(dataset_tag), split)
+    for c in checks:
+        typer.echo(f"  {'✓' if c.passed else '✗'} {c.name:<6} {c.detail}")
+    ok = all(c.passed for c in checks)
+    typer.echo(f"{version}：{'通过上线门槛' if ok else '不允许上线'}")
+    if not ok:
+        raise typer.Exit(1)
+
+
 @eval_app.command("curve")
 def eval_curve(
     pack: Annotated[str, typer.Option()] = "es",
@@ -714,6 +733,47 @@ def knowledge_index(pack: Annotated[str, typer.Option()] = "es") -> None:
     typer.echo(f"{index_name(pack)}：{n} 段（来自 {len({s.doc_id.split('#')[0] for s in secs})} 篇 runbook）")
     for s in secs:
         typer.echo(f"  {s.doc_id:<26} {','.join(s.detectors):<55} {s.heading}")
+
+
+@inv_app.command("confirm")
+def inv_confirm(
+    inv_id: str,
+    who: Annotated[str, typer.Option("--as", help="确认人")],
+    root_cause: Annotated[str | None, typer.Option("--root-cause", help="确认某个假设，例如 H1")] = None,
+    label: Annotated[str | None, typer.Option(help="直接给出根因标签（和 H1 不同就是修正）")] = None,
+    decline: Annotated[bool, typer.Option(help="不确认：调查结束，不写记忆（02 §3.4）")] = False,
+) -> None:
+    """人确认根因（02 §1 confirm 节点；05 §3.1）：确认或修正之后写入事故记忆；不确认就不写。"""
+    from sentinel.contracts import Diagnosis
+    from sentinel.core.graph.confirm import record_confirmation
+    from sentinel.core.graph.run import resume_online
+    from sentinel.core.packs_registry import load_pack
+    from sentinel.core.store import open_store
+    from sentinel.core.toolbackend import Mode
+
+    store = open_store()
+    rec = store.get_investigation(inv_id)
+    if rec is None or rec.diagnosis is None:
+        raise typer.BadParameter(f"调查 {inv_id} 不存在或没有诊断")
+    if not decline:
+        if (root_cause is None) == (label is None):
+            raise typer.BadParameter("--root-cause 和 --label 二选一（或者 --decline）")
+        try:
+            e = record_confirmation(
+                store.append_audit,
+                inv_id=inv_id,
+                diagnosis=Diagnosis.model_validate(rec.diagnosis),
+                hypothesis=root_cause,
+                label=label,
+                who=f"human:{who}",
+                valid_labels=[r.label for r in load_pack("es").manifest.root_causes],
+            )
+        except ValueError as err:
+            raise typer.BadParameter(str(err)) from err
+        typer.echo(f"{'已修正' if e.type == 'rootcause.corrected' else '已确认'}根因：{e.payload['label']}")
+    out = resume_online(inv_id, Mode.LIVE)
+    mem = out.get("memory_id")
+    typer.echo(f"{inv_id}  状态 {out.get('status')}  " + (f"已写入记忆 {mem}" if mem else "没有写入记忆"))
 
 
 @inv_app.command("context")

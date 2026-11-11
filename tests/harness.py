@@ -12,10 +12,14 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from ulid import ULID
 
+from sentinel.contracts import Diagnosis
 from sentinel.core.detect import load_env
+from sentinel.core.graph.confirm import Memorizer, record_confirmation
 from sentinel.core.graph.investigation import Deps, InvState, build_graph
 from sentinel.core.graph.remediate import record_decision
 from sentinel.core.llm.fake import Script, ScriptedChatModel
+from sentinel.core.memory.policy import load_memory_policy
+from sentinel.core.memory.store import LocalMemoryStore
 from sentinel.core.observations.store import ObservationStore
 from sentinel.core.packs_registry import LoadedPack, load_pack
 from sentinel.core.store import MemoryStore
@@ -25,6 +29,7 @@ from sentinel.core.versioning.freeze import freeze, require_frozen
 from sentinel.eval.replay_exec import replay_remediation
 from sentinel.governance.kill_switch import MemoryFreezeState
 from sentinel.governance.remediation_store import MemoryRemediationStore
+from tests.unit.test_memory import fake_embed
 
 FIX = Path(__file__).resolve().parent / "fixtures" / "es"
 PACK = load_pack("es")
@@ -74,6 +79,9 @@ class Harness:
             self.deps.remediation = replay_remediation(
                 self.rem_store, PACK.actions, lambda inv: self.deps.backend(PACK, inv), self.freeze_state.is_frozen
             )
+            # 确认段（M3 D12）：本地记忆索引 + 假向量（测试不访问网络）
+            self.mem_index = LocalMemoryStore()
+            self.deps.memorizer = Memorizer(store=self.mem_index, embed=fake_embed, policy=load_memory_policy())
 
     def run(self, mode: str = "report_only") -> InvState:
         inv = f"inv_{ULID()}"
@@ -89,6 +97,20 @@ class Harness:
         for req in self.rem_store.list_approval_requests():
             if self.rem_store.get_decision(req.id) is None:
                 record_decision(self.rem_store, self.store.append_audit, req.id, decision, who, None)
+
+    def confirm(self, inv: str, *, hypothesis: str | None = "H1", label: str | None = None) -> None:
+        """模拟 CLI 的 investigations confirm：同一个 record_confirmation。"""
+        rec = self.store.get_investigation(inv)
+        assert rec is not None and rec.diagnosis is not None
+        record_confirmation(
+            self.store.append_audit,
+            inv_id=inv,
+            diagnosis=Diagnosis.model_validate(rec.diagnosis),
+            hypothesis=None if label else hypothesis,
+            label=label,
+            who="human:t",
+            valid_labels=[r.label for r in PACK.manifest.root_causes],
+        )
 
     def resume(self, inv: str) -> InvState:
         g = build_graph(self.deps, self.saver)

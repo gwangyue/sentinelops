@@ -24,11 +24,13 @@ from sentinel.contracts import AgentVersion, ExecutionResult
 from sentinel.core.context.knowledge_layer import KnowledgeRetriever, NoKnowledge
 from sentinel.core.context.memory_layer import MemoryProvider, NoMemory
 from sentinel.core.detect import load_env
+from sentinel.core.graph.confirm import Memorizer
 from sentinel.core.graph.investigation import Deps, InvState, build_graph
 from sentinel.core.graph.remediate import Remediation
 from sentinel.core.knowledge.corpus import knowledge_hash
 from sentinel.core.knowledge.es_index import EsKnowledge
 from sentinel.core.llm.chat import chat_model
+from sentinel.core.llm.config import load_models_config
 from sentinel.core.llm.embed import embed
 from sentinel.core.memory.policy import load_memory_policy
 from sentinel.core.memory.provider import StoreMemoryProvider
@@ -167,7 +169,10 @@ def queue_executor(
 def _online_deps(mode: Mode, fixture: Path | None) -> Deps:
     store = open_store()
     rem = PgRemediationStore(PG_URL)
-    return make_deps(
+    # 确认后写记忆（05 §3.1）：不管 L5 开不开都写——写和读是分开的，L5 只决定"读出来放进上下文"
+    mem_index = EsMemoryStore("incidents-es")
+    mem_index.ensure(int(load_models_config().purposes["embedding"].params()["output_dimensionality"]))
+    deps = make_deps(
         store,
         ObservationStore(OBS_ROOT, index=store),
         mode,
@@ -175,6 +180,8 @@ def _online_deps(mode: Mode, fixture: Path | None) -> Deps:
         version=lambda: current_version(store),
         remediation=Remediation(store=rem, executor=queue_executor(rem), frozen=PgFreezeState(PG_URL).is_frozen),
     )
+    deps.memorizer = Memorizer(store=mem_index, embed=embed, policy=load_memory_policy())
+    return deps
 
 
 def _trace(target: str, backend: str) -> dict[str, Any]:
