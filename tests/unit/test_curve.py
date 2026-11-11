@@ -23,7 +23,7 @@ def test_points_pick_latest_tag_and_mark_ineffective(tmp_path: Path) -> None:
     results.save(tmp_path / "v4__ds-20261110-10__dev.jsonl", half)
     results.save(tmp_path / "v4__ds-20261110-10__heldout.jsonl", good)
     results.save(tmp_path / "v4__stream__ds-20261110-10__dev.jsonl", good)  # 事故流不算版本点
-    pts = points(tmp_path, {3: "加入 L3", 4: "按 06 §7.2 第 5 条不上线"})
+    pts = points(tmp_path, {3: "加入 L3", 4: "L4"}, {4: "ineffective"})
     assert [(p.seq, p.split, p.tag) for p in pts] == [
         (3, "dev", "ds-20261110-10"),
         (4, "dev", "ds-20261110-10"),

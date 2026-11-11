@@ -1,0 +1,12 @@
+# 每个评测过的版本按 06 §7.2 的取舍结论。收敛曲线（eval curve）按这里画实心 / 空心点（06 §8：无效改动不从图上删除）。
+# 为什么不从版本 note 里推：取舍是在评测之后才做的，结论通常写在下一个版本的 note 里；
+# 行为相同的版本还会被复用（v27 改回 facts 后复用了 v26），结论就没有地方写。
+# decision：shipped = 上线；ineffective = 第 5 条无效改动；not_shipped = 满足规则但按人的决定不上线；void = 作废（没有有效结果）
+versions:
+  11: { decision: ineffective, reason: "提示词改动；场景修正后在 v13 上重测，第 5 条" }
+  13: { decision: ineffective, reason: "同 v11 的提示词，与 v12 配对：第 5 条" }
+  18: { decision: ineffective, reason: "L4 知识层：步数、费用无显著变化，第 5 条" }
+  21: { decision: void, reason: "记忆读回丢向量，事故流第 2 个用例失败" }
+  22: { decision: void, reason: "串行跑到 19/72 时停掉，改为并行" }
+  23: { decision: ineffective, reason: "M-E1：L5 记忆，第 5 条（事故流结果，不在 dev 曲线上）" }
+  27: { decision: not_shipped, reason: "E1 raw：步数显著下降（第 4 条），但 3 节点集群不具代表性、上下文召回率失效，人决定不上线" }

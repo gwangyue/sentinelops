@@ -10,11 +10,23 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 from sentinel.eval import results
 from sentinel.eval.stats.bootstrap import interval
 
-# note 里出现这些词，说明这一版按 06 §7.2 没有上线（第 5 条无效改动，或者作废）
-INEFFECTIVE = ("无效", "不上线", "作废")
+DECISIONS = Path(__file__).resolve().parents[3] / "datasets" / "version_decisions.yaml"
+NOT_SHIPPED = ("ineffective", "not_shipped", "void")
+
+
+def load_decisions(path: Path = DECISIONS) -> dict[int, str]:
+    """版本 → 06 §7.2 的取舍结论（见 datasets/version_decisions.yaml 文件头的说明）。"""
+    if not path.exists():
+        return {}
+    rows = yaml.safe_load(path.read_text(encoding="utf-8")).get("versions") or {}
+    return {int(k): v["decision"] for k, v in rows.items()}
+
+
 FILE = re.compile(r"^v(\d+)__(ds-[\w-]+)__(dev|heldout)\.jsonl$")
 
 
@@ -41,7 +53,7 @@ def _tag_order(tag: str) -> tuple[int, ...]:
     return tuple(int(x) for x in tag.removeprefix("ds-").split("-"))
 
 
-def points(root: Path, notes: dict[int, str]) -> list[Point]:
+def points(root: Path, notes: dict[int, str], decisions: dict[int, str]) -> list[Point]:
     """每个（版本, split）取最新的那个标签的结果；事故流、基线、侧文件都不算版本点。"""
     latest: dict[tuple[int, str], Path] = {}
     for f in root.glob("v*__ds-*.jsonl"):
@@ -57,7 +69,7 @@ def points(root: Path, notes: dict[int, str]) -> list[Point]:
         top1, low, high = interval(scores)
         note = notes.get(seq, "")
         tag = _tag(f)
-        out.append(Point(seq, tag, split, top1, low, high, any(w in note for w in INEFFECTIVE), note))
+        out.append(Point(seq, tag, split, top1, low, high, decisions.get(seq) in NOT_SHIPPED, note))
     return out
 
 
@@ -75,7 +87,7 @@ def render(pts: list[Point], path: Path) -> None:
         ax.annotate(f"v{p.seq}", (p.seq, p.high), textcoords="offset points", xytext=(0, 6), ha="center", fontsize=8)
     for p in pts:
         if p.split == "heldout":
-            ax.plot(p.seq, p.top1, "D", ms=8, color="#c62828")
+            ax.plot(p.seq + 0.3, p.top1, "D", ms=8, color="#c62828")  # 右移一点：不要盖住同版本的 dev 点
     prev = None
     for p in dev:
         if prev is not None and p.tag != prev:

@@ -478,13 +478,13 @@ def eval_curve(
     """收敛曲线（06 §8）：每个版本 dev 上的 top1 和 95% 区间；无效改动画空心点；heldout 画菱形。"""
     from sentinel.core.store import open_store
     from sentinel.eval import results
-    from sentinel.eval.curve import points, render
+    from sentinel.eval.curve import load_decisions, points, render
 
     # TODO(edge)：结果文件按领域分开存；现在只有 es，pack 参数只做校验
     if pack != "es":
         raise typer.BadParameter("目前只有 es 的评测结果")
     notes = {v.seq: v.note for v in open_store().list_versions()}
-    pts = points(results.ROOT, notes)
+    pts = points(results.ROOT, notes, load_decisions())
     render(pts, out)
     for p in pts:
         mark = "○" if p.ineffective else "●"
