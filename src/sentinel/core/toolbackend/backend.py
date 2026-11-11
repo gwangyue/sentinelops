@@ -32,12 +32,17 @@ class ReplayIndex:
     """录制文件：每行 {tool, args, raw, error, phase, ts}。同一个键录到多次时按顺序返回，用完后一直返回最后一次。
 
     phase：before = 注入故障之前的快照（L3 变更层的"上一次快照"，05 §3.5"回放时基线也从录制里读"）；
-           pre = 故障状态（工具调用回放的就是这些）；post = 执行动作之后（M3）。
+           pre = 故障状态（工具调用回放的就是这些）；
+           post = 执行动作之后（M3 D11），记录里带 action 字段：录制时执行的是哪个动作。
+    回放时先读 pre；回放执行器模拟"执行"之后调用 enter_post，之后的调用读 post。
     """
 
     def __init__(self, path: Path) -> None:
         self._items: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
         self._before: dict[str, dict[str, Any]] = {}
+        self._post: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
+        self.post_action: str | None = None  # 录制 post 阶段时执行的动作
+        self.in_post = False
         for line in path.read_text(encoding="utf-8").splitlines():
             rec = json.loads(line)
             key = replay_key(rec["tool"], rec["args"])
@@ -46,14 +51,24 @@ class ReplayIndex:
                 self._items[key].append(rec)
             elif phase == "before":
                 self._before[key] = rec
-            # TODO(edge): phase="post"（执行动作之后的观测，M3）要按执行进度切换
+            elif phase == "post":
+                self._post[key].append(rec)
+                self.post_action = rec.get("action")
 
     def before(self, tool: str, args: dict[str, Any]) -> dict[str, Any] | None:
         """注入之前的快照记录；旧录制没有快照时返回 None。"""
         return self._before.get(replay_key(tool, args))
 
+    def enter_post(self, action_id: str) -> bool:
+        """切到执行之后的录制。录制时执行的不是这个动作（或者没有 post 录制）就不切，返回 False：
+        别的动作执行之后集群会是什么样，录制里没有，不能假装知道（ADR-003 不做模糊匹配）。"""
+        if not self._post or self.post_action != action_id:
+            return False
+        self.in_post = True
+        return True
+
     def take(self, key: str) -> dict[str, Any] | None:
-        q = self._items.get(key)
+        q = (self._post if self.in_post else self._items).get(key)
         if not q:
             return None
         return q.popleft() if len(q) > 1 else q[0]
@@ -90,6 +105,18 @@ class ToolBackend:
         self._replay = ReplayIndex(fixture) if mode is Mode.REPLAY and fixture else None
         self._memo: dict[str, ToolResult] = {}
         self.phase = phase  # 只影响 Record 模式写进录制的 phase 字段
+        self.action: str | None = None  # Record 模式录 post 阶段时，执行的是哪个动作
+
+    def refresh(self) -> None:
+        """丢掉本次调查的调用缓存：验证要轮询最新状态，执行之后也不能再用执行之前的结果。"""
+        self._memo.clear()
+
+    def enter_post(self, action_id: str) -> bool:
+        """回放执行器模拟"已执行"：切到录制的 post 阶段（见 ReplayIndex.enter_post）。非回放模式返回 False。"""
+        ok = self._replay is not None and self._replay.enter_post(action_id)
+        if ok:
+            self.refresh()
+        return ok
 
     def replay_before(self, tool: str, args: dict[str, Any]) -> dict[str, Any] | None:
         """回放模式下，录制里注入前的快照（L3 变更层用）；非回放模式返回 None。"""
@@ -139,6 +166,7 @@ class ToolBackend:
                 "tool": tool,
                 "args": cargs,
                 "phase": self.phase,
+                **({"action": self.action} if self.phase == "post" else {}),
                 "ts": datetime.now(UTC).isoformat(),  # L3 变更层的窗口判断用快照时间
                 "raw": fetched.raw if fetched.status == "ok" else None,
                 "error": fetched.raw if fetched.status == "error" else None,

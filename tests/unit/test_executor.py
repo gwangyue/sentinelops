@@ -118,3 +118,20 @@ def test_action_exception_recorded_as_failed() -> None:
 
     r = process(req, st, SPECS, tools(), boom, at(1))
     assert r.status == "failed" and "ES 返回 500" in r.output["error"]
+
+
+def test_replay_runner_switches_phase_only_for_recorded_action() -> None:
+    from sentinel.exec.replay import replay_runner
+
+    switched: list[str] = []
+
+    def enter_post(aid: str) -> bool:
+        switched.append(aid)
+        return aid == "es.enable_allocation"
+
+    st, req = setup()
+    r = process(req, st, SPECS, tools(), replay_runner(enter_post), at(1))
+    assert r.status == "succeeded" and r.output["simulated"] and switched == ["es.enable_allocation"]
+    st2, req2 = setup()
+    r2 = process(req2, st2, SPECS, tools(), replay_runner(lambda aid: False), at(1))
+    assert r2.status == "failed" and "PostNotRecorded" in r2.output["error"]
