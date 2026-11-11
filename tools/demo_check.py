@@ -228,6 +228,32 @@ def step8_memory_reused() -> tuple[Status, str]:
     return Status.PASS, ""
 
 
+def step10_report_and_audit() -> tuple[Status, str]:
+    """周报的每个数字都能用 SQL 从审计表里重新算出来；audit verify 返回 0（golden-demo 第 10 步）。"""
+    from datetime import UTC, datetime, timedelta
+
+    from sentinel.governance.audit import verify_chain
+    from sentinel.governance.report import audit_numbers, sqlite_runner
+
+    h, _, _ = _confirmed()
+    ev = h.store.audit_events()
+    now = datetime.now(UTC)
+    a = audit_numbers(sqlite_runner(ev), now - timedelta(days=1), now + timedelta(days=1))
+    expect = {
+        "investigations": sum(1 for e in ev if e.type == "investigation.started"),
+        "executed": sum(1 for e in ev if e.type == "action.executed" and e.payload.get("status") == "succeeded"),
+        "verify_passed": sum(1 for e in ev if e.type == "verify.passed"),
+        "confirmed": sum(1 for e in ev if e.type == "rootcause.confirmed"),
+        "diagnoses": sum(1 for e in ev if e.type == "diagnosis.completed"),
+    }
+    got = {k: getattr(a, k) for k in expect}
+    if got != expect:
+        return Status.FAIL, f"SQL 算出的 {got} 和直接数事件的 {expect} 不一致"
+    if problems := verify_chain(ev):
+        return Status.FAIL, f"审计链断了：{problems[0]}"
+    return Status.PASS, ""
+
+
 def step9_curve_and_ablation() -> tuple[Status, str]:
     """曲线上的每个点都有对应的版本和数据集标签；消融结果包含增益、伤害率、区间 3 项（离线、用合成结果）。"""
     import tempfile
@@ -269,6 +295,7 @@ CHECKS[6] = step6_approve_execute_verify
 CHECKS[7] = step7_confirm_memorize
 CHECKS[8] = step8_memory_reused
 CHECKS[9] = step9_curve_and_ablation
+CHECKS[10] = step10_report_and_audit
 
 
 def run(force_all: bool) -> int:

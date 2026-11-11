@@ -23,6 +23,7 @@ EXPECTED = {
     ("audit", "verify"),
     ("audit", "anchor"),
     ("freeze",),
+    ("report", "weekly"),
     ("unfreeze",),
     ("approvals", "show"),
     ("approvals", "approve"),

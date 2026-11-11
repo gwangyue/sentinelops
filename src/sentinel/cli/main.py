@@ -33,6 +33,8 @@ app.add_typer(dataset_app, name="dataset")
 app.add_typer(eval_app, name="eval")
 approvals_app = typer.Typer(no_args_is_help=True, help="审批（03 §4.4；02 §3.4：审批不经过 LLM）")
 app.add_typer(approvals_app, name="approvals")
+report_app = typer.Typer(no_args_is_help=True, help="治理周报（07 §8）")
+app.add_typer(report_app, name="report")
 audit_app = typer.Typer(no_args_is_help=True, help="审计（07 §5）")
 app.add_typer(audit_app, name="audit")
 
@@ -552,6 +554,100 @@ def audit_anchor() -> None:
     with ANCHORS.open("a", encoding="utf-8") as f:
         f.write(f"{datetime.now(UTC).isoformat()} {last.id} {event_hash(last)}\n")
     typer.echo(f"已锚定 {last.id}（{event_hash(last)[:16]}…）→ {ANCHORS}")
+
+
+def _week(spec: str | None):  # type: ignore[no-untyped-def]
+    """ISO 周，例如 2026-W46；不填就是本周。返回 (标签, 开始, 结束)，左闭右开，UTC。"""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    if spec is None:
+        iso = now.isocalendar()
+        spec = f"{iso.year}-W{iso.week:02d}"
+    year, wk = spec.split("-W")
+    start = datetime.fromisocalendar(int(year), int(wk), 1).replace(tzinfo=UTC)
+    return spec, start, start + timedelta(days=7)
+
+
+@report_app.command("weekly")
+def report_weekly(
+    week: Annotated[str | None, typer.Option(help="ISO 周，例如 2026-W46；不填就是本周")] = None,
+    show_sql: Annotated[
+        bool, typer.Option(help="打印每个数字对应的 SQL（golden-demo 第 10 步：能用 SQL 重算）")
+    ] = False,
+) -> None:
+    """每周 30 分钟看 5 个数（07 §8）：调查与修复、安全、线上质量、评测状态、成本，加上需要你决定的事。"""
+    from datetime import UTC, datetime
+
+    import psycopg
+    import yaml
+
+    from sentinel.core.api import load_models_config
+    from sentinel.core.graph.run import PG_URL
+    from sentinel.core.packs_registry import discover_packs
+    from sentinel.eval.report import HELDOUT_STALE_DAYS, pack_eval, shipped_version
+    from sentinel.eval.scorers import cost_usd, load_pricing
+    from sentinel.governance.report import QUERIES, audit_numbers, pg_runner
+
+    if show_sql:
+        for name, sql in QUERIES.items():
+            typer.echo(f"-- {name}\n{sql};\n")
+        return
+    label, start, end = _week(week)
+    with psycopg.connect(PG_URL) as conn:
+        a = audit_numbers(pg_runner(conn), start, end)
+    gov = yaml.safe_load(Path("config/governance.yaml").read_text(encoding="utf-8"))
+    model = load_models_config().purposes["diagnosis"].model
+    cost = cost_usd(model, a.tokens_in, a.tokens_out, load_pricing())
+    budget = 7 * float(gov["budget"]["daily_usd"])
+    shipped = shipped_version()
+    evals = [pack_eval(p, shipped, datetime.now(UTC)) for p in discover_packs()]
+
+    typer.echo(f"治理周报 {label}（{start:%m-%d} – {end:%m-%d}，UTC）  当前上线版本 v{shipped}")
+    rate = f"{a.verify_passed}/{a.executed}" if a.executed else "—"
+    typer.echo(
+        f"1. 调查 {a.investigations} 次；执行修复 {a.executed} 次，修复成功率 {rate}；"
+        f"验证失败 {a.verify_failed} 次，回滚 {a.rolled_back} 次"
+    )
+    rej = "；".join(f"{aid}（{r or '没有说明'}）" for aid, r in a.approvals_rejected) or "无"
+    typer.echo(f"2. 不安全提议 {a.unsafe} 次；被拒绝的审批 {len(a.approvals_rejected)} 次：{rej}；冻结 {a.freezes} 次")
+    asked = a.confirmed + a.corrected
+    added = sum(e.online_corrections for e in evals)
+    typer.echo(f"3. 修好之后人确认根因 {asked}/{a.resolved}（其中修正 {a.corrected} 次 → 已补进数据集 {added} 条）")
+    for e in evals:
+        if e.top1 is None:
+            typer.echo(f"4. [{e.pack}] 还没有 dev 评测结果")
+            continue
+        which = f"v{e.version}" + (
+            "" if e.version == shipped else f"（v{shipped} 没有单独的结果，用最近的 v{e.version}）"
+        )
+        held = "从未运行" if e.heldout_days_ago is None else f"{e.heldout_days_ago} 天前，已用 {e.heldout_runs} 次"
+        typer.echo(
+            f"4. [{e.pack}] {which} dev top1 {e.top1:.2f} [{e.low:.2f}, {e.high:.2f}]（{e.tag}）；保留测试集：{held}"
+        )
+    per = f"${cost / a.diagnoses:.3f}" if a.diagnoses else "—"
+    typer.echo(
+        f"5. 成本 ${cost:.2f}（{a.diagnoses} 次诊断，平均 {per}；不含 plan 节点的调用）；"
+        f"预算使用率 {cost / budget:.0%}（每周 ${budget:.0f}）"
+    )
+    decide: list[str] = []
+    for inv, plan, action, ts in a.temporary_fixes:
+        decide.append(f"临时修复还没撤销：{action}（{plan}，{str(ts)[:16]}，调查 {inv}）")
+    for mem, why in a.memory_invalidated:
+        decide.append(f"记忆 {mem} 被自动失效（{why or '有用率低或伤害多'}）：看看是不是该删掉或修正")
+    alert = float(gov["report"]["approval_reject_rate_alert"])
+    for action, by in a.approvals_by_action.items():
+        n = sum(by.values())
+        if n >= 2 and by.get("rejected", 0) / n > alert:
+            decide.append(f"{action} 的审批拒绝率 {by.get('rejected', 0)}/{n}：动作或它的前置检查可能有问题")
+    for e in evals:
+        if e.heldout_days_ago is not None and e.heldout_days_ago > HELDOUT_STALE_DAYS:
+            decide.append(f"[{e.pack}] 保留测试集 {e.heldout_days_ago} 天没跑了")
+        for g, n in e.small_groups.items():
+            decide.append(f"[{e.pack}] dev 的 {g} 组只有 {n} 个场景，区间没有意义，建议补充")
+    typer.echo("需要你决定的事：" + ("无" if not decide else ""))
+    for item in decide:
+        typer.echo(f"  - {item}")
 
 
 @app.command("freeze")
