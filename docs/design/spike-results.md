@@ -442,3 +442,31 @@ LangSmith 记录的费用约为每次调查 0.008 美元。样本只有几次，
 - 版本：v29（修复段）、v30（CLI 修复）、v31（水位动作修复，当前版本）。
 
 **还没做（M3 D12）**：confirm 节点和确认后写记忆（golden-demo 第 7、8 步）、`audit verify`、`freeze / unfreeze`、只做安全底线的上线门槛（`eval gate`）。
+
+## M3 D12（2026-11-11）：确认根因、紧急停止、审计校验、上线门槛；M3 验收
+
+**做了什么**：
+- confirm 节点（只有 `interrupt()`）和 memorize：人确认或修正根因（`investigations confirm --root-cause H1 | --label | --decline`）之后才写记忆；修正过的记忆 `corrected=true`；不确认不写。
+- 紧急停止 `sentinel freeze / unfreeze`（ADR-014）：执行器每次执行前读冻结状态；冻结时作废待审批、不出方案，诊断照常。
+- `sentinel audit verify / anchor`：重算哈希链，报告第一个断点；本地锚定文件防"整条链被重算"。
+- `sentinel eval gate`：安全、契约、回放覆盖率（06 §7.1）。
+
+**M3 验收（kind，真实 Gemini）**：
+
+| golden-demo 步骤 | 结果 |
+|---|---|
+| 2 注入 → 3、5 诊断和方案 → 6 审批、执行、验证 | `inv_01M7489M…`：提议 `raise_watermark_temporarily {high_pct: 94}`；`approval.decided（human:approver）→ action.executed（executor）→ verify.passed` |
+| 7 确认根因、写记忆 | `investigations confirm … --root-cause H1 --as oncall` → `rootcause.confirmed → memory.written`，记忆 `mem_01M74E05…`，`source_investigations` 包含这次调查 |
+| 8 再次注入，记忆生效 | 演示版本 v34（只打开 L5，不发布）：第二次调查 `inv_01M74E2Q…` 的 L5 包含 `mem_01M74E05…`，H1 的 `from_memory` 也包含它；修复方案按演示要求拒绝 |
+| 紧急停止演练 | `freeze` 作废了 1 个遗留的待审批；审计 `freeze.enabled → approval.expired（system:freeze）→ freeze.disabled` |
+| 审计校验 | `audit verify --since 1d`：120 条完整，锚定 1 个一致 |
+| 上线门槛 | v35：不安全提议 0（72 次修复模式运行）、契约 72 行通过、录制未覆盖 0/24 → 通过 |
+| `make demo-check` | 打开到 M3，第 1–9 步全部通过 |
+
+**v32 → v35**：v32 的修复模式评测有 2 次失败——模型把分片上限提到 20（前置检查最多允许原值的 2 倍，也就是 12），方案被拦下、调查升级，旧的评分口径把它算成 top1 错误（0.97）。两处修改：参数 schema 加 `description` 写明取值规则；top1 只看诊断阶段的升级。v35：48/48 resolved，top1 1.00，不稳定用例率 0。改进只有 2 次、不显著，**按人的决定作为缺陷修复上线**（06 §7.2 备注）。
+
+**这一段的发现**：
+- 模型把假设编号写成小写 `h1`，确认命令只认 `H1`——确认现在不区分大小写。
+- 去重窗口（30 分钟）在演示里挡了两次：同一个故障短时间内重复巡检会被去重，这是设计内的行为，验收要隔开 30 分钟。
+- 修复之后的"临时"设置不会自动恢复：验收时手动恢复了水位。谁、什么时候恢复临时设置，是 M4 周报里"需要你决定的事"的候选。
+- 版本：v32（D12）、v33（CLI 修复）、v34（演示，L5 开，不发布）、v35（**M3 发布版本**）。

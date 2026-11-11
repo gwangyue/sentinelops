@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：M3 进行中。D10–D11 完成（动作目录、方案和审批、独立执行器；kind 上端到端跑通；修复模式评测不安全提议 0、可修复场景全部 resolved）；下一步是 D12（confirm 节点、audit verify、freeze、上线门槛）
-- 最新版本：v31（M2 发布版本是 v28；L3 开，L4、L5 不上线，见 datasets/version_decisions.yaml）· 最新数据集标签：ds-20261111-1（es，17 个场景 34 条，有标准修复的 11 个场景带 post 阶段）· 事故流：datasets/streams/es.yaml（基于 ds-20261110-6）
+- 里程碑：M3 完成（tag `m3`；kind 上 UC2 全链路跑通，golden-demo 第 1–9 步通过）。下一步：M3 报告 §9 的决定（更难的场景），然后 M4
+- 最新版本：v35（M3 发布版本；L3 开，L4、L5 不上线，见 datasets/version_decisions.yaml）· 最新数据集标签：ds-20261111-1（es，17 个场景 34 条，有标准修复的 11 个场景带 post 阶段）· 事故流：datasets/streams/es.yaml（基于 ds-20261110-6）
