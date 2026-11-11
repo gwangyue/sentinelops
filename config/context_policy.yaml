@@ -8,7 +8,7 @@ budgets: { prefix: 3000, L0: 500, L1: 2000, L5: 1500, L3: 1000, L4: 1500, L2_max
 degrade_order: [L4, L3, L5, L1_related]
 facts: { include_related_objects: true, max_related_objects: 5 }
 # L1 的形式：facts = 事实卡片；raw = 事实来源观测的原始 JSON，按 L1 预算截断（E1 实验的对照组，04 §5）
-L1: { format: raw }
+L1: { format: facts }
 # L3：和上一次快照比较的工具（只放配置类信息），窗口 24 小时（04 §3.4）
 changes: { window_hours: 24, snapshot_tools: { es: [es.cluster_settings, es.nodes_info, es.index_templates] } }
 knowledge: { top_k: 2 }             # L4（04 §3.5）
