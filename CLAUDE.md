@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：M4 进行中。D13 完成：通用化（tag `m4-base`，core/exec 相对 m3 有改动）+ MySQL 专家包（相对 m4-base，core/exec 零改动）。下一步 D14（周报、MCP 可选）
-- 最新版本：v39（L3 开，L4、L5 不上线；es + mysql 两个专家包）· 数据集标签：es `ds-20261111-1`（17 个场景 34 条）、mysql `ds-20261111-2`（3 个场景 6 条）· 事故流：datasets/streams/es.yaml
+- 里程碑：M4 进行中。D13 完成（通用化 tag `m4-base` + MySQL 专家包，core/exec 相对 m4-base 零改动）；D14 完成（治理周报、MCP 只读服务）。下一步 D15–D16（Helm、Terraform、EKS）
+- 最新版本：v40（L3 开，L4、L5 不上线；es + mysql 两个专家包）· 数据集标签：es `ds-20261111-1`（17 个场景 34 条）、mysql `ds-20261111-2`（3 个场景 6 条）· 事故流：datasets/streams/es.yaml

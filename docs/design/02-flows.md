@@ -393,6 +393,8 @@ sequenceDiagram
 | 返回事实卡片摘要，不返回原始输出 | 控制数据量和敏感信息 |
 | 每次调用都写审计 | 外部调用也要可追溯 |
 
+**实现（M4 D14）**：`sentinel mcp serve --as <调用方>`（stdio，官方 `mcp` SDK 2.x 的 `MCPServer`）。只导出 `mcp_export: true` 的只读工具（`es.hot_threads`、`es.tasks`、`mysql.processlist` 可能含敏感内容，不导出；动作一律不导出）；调用方能访问哪些目标写在 `config/governance.yaml` 的 `mcp.callers`，白名单外直接拒绝、不调用工具；返回确定性摘要并标明来自 SentinelOps；每次调用（包括被拒绝的）写审计 `mcp.call`。第一版的调用方身份取自启动参数，认证由企业网关负责（不实现）。实测：官方 MCP 客户端通过 stdio 列出 15 个工具，`workbuddy` 读 es-target 成功、读 mysql-target 被拒绝，两次都进了审计。
+
 ---
 
 ## 9. L5 判断：流程上的取舍
