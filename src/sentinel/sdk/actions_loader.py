@@ -6,7 +6,7 @@
 """
 
 import importlib
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,7 @@ def load_action_specs(pack_dir: Path, action_ids: Sequence[str]) -> dict[str, Ac
     return out
 
 
-def resolve_entry(entry: str) -> Callable[..., Any]:
+def resolve_entry(entry: str) -> Any:
+    # 返回 Any：入口可能是函数（动作），也可能是 ReadTool 对象（工具），由调用方决定怎么用
     mod, _, fn = entry.partition(":")
-    return getattr(importlib.import_module(mod), fn)  # type: ignore[no-any-return]
+    return getattr(importlib.import_module(mod), fn)

@@ -104,6 +104,16 @@ step_workloads() {
   else
     log "Secret targets/sentinel-ro-user 已存在，跳过"
   fi
+  # 执行器的写账号（ADR-005）：只有执行器进程会拿到它，见 deploy/kind/exec-env.sh
+  if ! kc -n targets get secret sentinel-exec-user >/dev/null 2>&1; then
+    kc -n targets create secret generic sentinel-exec-user --type=kubernetes.io/basic-auth \
+      --from-literal=username=sentinel-exec \
+      --from-literal=password="$(openssl rand -hex 16)" \
+      --from-literal=roles=sentinel_executor
+    log "Secret targets/sentinel-exec-user 已创建"
+  else
+    log "Secret targets/sentinel-exec-user 已存在，跳过"
+  fi
   kc apply -f "$M/es-target.yaml" -f "$M/es-memory.yaml" -f "$M/postgres.yaml"
 }
 

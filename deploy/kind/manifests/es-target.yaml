@@ -13,6 +13,7 @@ spec:
       - secretName: sentinel-readonly-role
     fileRealm:
       - secretName: sentinel-ro-user
+      - secretName: sentinel-exec-user   # 执行器（ADR-005）：M3 D10 加
   nodeSets:
     - name: data
       count: 3
@@ -46,3 +47,10 @@ stringData:
       indices:
         - names: ["*"]
           privileges: [monitor, view_index_metadata]
+    # 执行器只拿动作目录需要的写权限（01 §6）。不用 manage：索引级的 manage 包含删除索引，
+    # 集群级的 manage 包含快照、ILM 等动作目录用不到的操作；这里只给具体的动作名
+    sentinel_executor:
+      cluster: [monitor, "cluster:admin/settings/update", "cluster:admin/reroute"]
+      indices:
+        - names: ["*"]
+          privileges: [monitor, view_index_metadata, "indices:admin/settings/update"]
