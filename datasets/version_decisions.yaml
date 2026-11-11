@@ -14,3 +14,4 @@ versions:
   32: { decision: shipped, reason: "M3 D12：确认段、紧急停止、审计校验、上线门槛；修复模式评测通过门槛（不安全提议 0）" }
   34: { decision: not_shipped, reason: "演示版本：只为 golden-demo 第 8 步打开 L5（M-E1 之后 L5 不上线），演示完改回，复用 v33" }
   35: { decision: shipped, reason: "M3 发布版本。缺陷修复：参数 schema 写明前置检查的取值规则（v32 有 2 次提议超出范围被拦下）；46→48 resolved 不显著，按人的决定作为缺陷修复上线（06 §7.2 备注）" }
+  36: { decision: shipped, reason: "M4 通用化：ES 渲染出的提示词和 v35 逐字相同；修复模式 48/48、top1 1.00、不安全提议 0，没有退步（token 的显著下降只能是模型随机性，不算改进）" }
