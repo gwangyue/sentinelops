@@ -24,13 +24,17 @@ from sentinel.core.api import (
     current_version,
     investigate,
     load_models_config,
+    load_packs,
     make_deps,
     open_store,
+    resume,
 )
 from sentinel.eval import results
 from sentinel.eval.dataset import REPO
 from sentinel.eval.guards import check_no_cache, require_dataset_tag
+from sentinel.eval.replay_exec import approve_all, replay_remediation
 from sentinel.eval.scorers import as_feedback, load_pricing, score
+from sentinel.governance.remediation_store import MemoryRemediationStore
 
 
 class EvalError(RuntimeError):
@@ -44,13 +48,37 @@ def checked_version(version_arg: str | None) -> AgentVersion:
     return v
 
 
-def run_one(inputs: dict[str, Any], version: AgentVersion, memory: MemoryProvider | None = None) -> dict[str, Any]:
+def run_one(
+    inputs: dict[str, Any], version: AgentVersion, memory: MemoryProvider | None = None, mode: str = "report_only"
+) -> dict[str, Any]:
     """一次调查：和线上同一套组装（core.make_deps），只是换成独立的内存存储 + 回放 fixture_ref。
-    不写 Postgres，不留审计（评测不是线上调查）。memory 由事故流运行器传入（每条流一个临时记忆索引）。"""
+    不写 Postgres，不留审计（评测不是线上调查）。memory 由事故流运行器传入（每条流一个临时记忆索引）。
+    mode=remediate（M3）：修复段用回放执行器（eval/replay_exec.py）；停在审批时以 sim:eval 批准后恢复。"""
     store = MemoryStore()
     obs = ObservationStore(Path(tempfile.mkdtemp(prefix="sentinel-eval-")), index=store)
-    deps = make_deps(store, obs, Mode.REPLAY, REPO / inputs["fixture_ref"], version=lambda: version, memory=memory)
-    s = investigate(deps, inputs["trigger"]["target"], "es", InMemorySaver())
+    rem_store = MemoryRemediationStore()
+    holder: dict[str, Any] = {}
+    remediation = (
+        replay_remediation(
+            rem_store, load_packs()["es"].actions, lambda inv: holder["deps"].backend(load_packs()["es"], inv)
+        )
+        if mode == "remediate"
+        else None
+    )
+    deps = make_deps(
+        store,
+        obs,
+        Mode.REPLAY,
+        REPO / inputs["fixture_ref"],
+        version=lambda: version,
+        memory=memory,
+        remediation=remediation,
+    )
+    holder["deps"] = deps
+    saver = InMemorySaver()  # investigate 和 resume 共用：恢复时要找回同一个线程的状态
+    s = investigate(deps, inputs["trigger"]["target"], "es", saver, mode=mode)
+    if "__interrupt__" in s and approve_all(rem_store):
+        s = resume(deps, s["inv_id"], saver)
     return {
         "status": s.get("status"),
         "escalate_reason": s.get("escalate_reason"),
@@ -62,6 +90,10 @@ def run_one(inputs: dict[str, Any], version: AgentVersion, memory: MemoryProvide
         "fact_sheets": s.get("fact_sheets", []),
         "changes": s.get("changes", []),
         "inv_id": s["inv_id"],
+        # 修复段（M3）：评分要用
+        "proposal": s.get("proposal"),
+        "unsafe_proposals": s.get("unsafe_proposals", 0),
+        "remediation": s.get("remediation"),
     }
 
 
@@ -72,7 +104,9 @@ class RunSummary:
     scores: list[RunScore]
 
 
-def run(pack: str, split: str, dataset_tag: str | None, reps: int, version_arg: str | None) -> RunSummary:
+def run(
+    pack: str, split: str, dataset_tag: str | None, reps: int, version_arg: str | None, mode: str = "report_only"
+) -> RunSummary:
     tag = require_dataset_tag(dataset_tag)
     check_no_cache()  # 被测 Agent 不开缓存（08 §6.4；06 §4.4）
     version = checked_version(version_arg)
@@ -84,7 +118,7 @@ def run(pack: str, split: str, dataset_tag: str | None, reps: int, version_arg: 
         raise EvalError(f"sentinel-{pack} 在 {tag} / {split} 下没有用例")
 
     def target(inputs: dict[str, Any]) -> dict[str, Any]:
-        return run_one(inputs, version)
+        return run_one(inputs, version, mode=mode)
 
     def scorer(inputs: dict[str, Any], outputs: dict[str, Any], reference_outputs: dict[str, Any]) -> dict[str, Any]:
         s = score(
@@ -112,7 +146,7 @@ def run(pack: str, split: str, dataset_tag: str | None, reps: int, version_arg: 
             "split": split,
             "pricing_basis": pricing[model]["basis"],
         },
-        experiment_prefix=f"v{version.seq}",
+        experiment_prefix=f"v{version.seq}" + ("-remediate" if mode == "remediate" else ""),
         client=client,
     )
     # 本地也存一份 RunScore（统计从这里读）。rep 按同一用例出现的顺序编号
@@ -138,7 +172,8 @@ def run(pack: str, split: str, dataset_tag: str | None, reps: int, version_arg: 
         )
         runs.append(results.run_record(eid, seen[eid], run_.outputs))
         seen[eid] += 1
-    path = results.result_file(f"v{version.seq}", tag, split)
+    # 修复模式单独存一份：和只报告模式的结果不是同一个实验，不能互相覆盖
+    path = results.result_file(f"v{version.seq}" + ("__remediate" if mode == "remediate" else ""), tag, split)
     results.save(path, scores)
     results.save_runs(path, runs)
     return RunSummary(res.experiment_name, path, scores)

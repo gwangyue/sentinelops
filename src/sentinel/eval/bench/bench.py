@@ -13,23 +13,35 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from ulid import ULID
 
-from sentinel.contracts import EvalExample, ExampleInputs, ExampleMetadata, ExampleOutputs, FaultRef, ScenarioSpec
+from sentinel.contracts import (
+    ApprovalDecision,
+    EvalExample,
+    ExampleInputs,
+    ExampleMetadata,
+    ExampleOutputs,
+    FaultRef,
+    ScenarioSpec,
+)
 from sentinel.core.api import (
     LoadedPack,
     Mode,
     ObservationStore,
     ToolBackend,
+    build_plan,
+    execution_keys,
     load_env,
     load_pack,
     open_backend,
+    request_approval,
     resolve_credential,
     run_detect,
+    run_verify,
 )
 from sentinel.eval.dataset import (
     REPO,
@@ -39,6 +51,10 @@ from sentinel.eval.dataset import (
     split_for,
     write_fixture_index,
 )
+from sentinel.exec.core import live_runner, process
+from sentinel.exec.live import ExecTools, WriteHttpClient, write_connection
+from sentinel.exec.live import manifest as exec_manifest
+from sentinel.governance.remediation_store import ExecRequest, MemoryRemediationStore
 from sentinel.sdk import DetectContext, ReadOnlyHttp
 
 DEPLOY = REPO / "deploy"
@@ -188,6 +204,73 @@ def sweep(pack: LoadedPack, tb: ToolBackend) -> None:
                     )
 
 
+def remediate_and_record_post(pack: LoadedPack, spec: ScenarioSpec, fixture: Path, tb: ToolBackend) -> str:
+    """M3 D11：在故障状态下执行一次场景的标准修复，录下执行之后的状态（phase=post），再把修复回滚。
+
+    走的是和线上同一套确定性代码：plan 节点的 build_plan（前置检查、预演、plan_hash）、执行器的 process
+    （哈希、审批、幂等、执行前重做前置检查）。审批人是 bench。执行在本进程里调用执行器核心代码，写凭证由
+    exec/ 解析（需要先 source deploy/kind/exec-env.sh）；记录放在内存存储里，不进线上的审批表。
+    返回一句说明，写进 fixture 索引。
+    """
+    assert spec.remediation is not None
+    p = spec.remediation
+    action = pack.actions[p.action_id]
+    inv = f"inv_bench_{ULID()}"
+    plan, why = build_plan(inv, TARGET, p, action, tb)
+    if plan is None:
+        raise BenchError(f"{spec.id}：标准修复 {p.action_id} 的方案没有通过：{why}")
+    store = MemoryRemediationStore()
+    req = request_approval(store, plan, timedelta(minutes=30))
+    store.put_decision(
+        ApprovalDecision(
+            approval_id=req.id,
+            decision="approved",
+            approver="bench",
+            reason="录制 post 阶段",
+            decided_at=datetime.now(UTC),
+        )
+    )
+    m = exec_manifest(pack.manifest.pack)
+    url, user, pw = write_connection(m)
+    run = live_runner(lambda: WriteHttpClient(url, user, pw))
+    tools = ExecTools(m, ReadOnlyHttp(url, user, pw))
+
+    def submit(kind: str) -> str:
+        r = process(
+            ExecRequest(0, kind, plan.id, req.id, execution_keys(plan, kind)),  # type: ignore[arg-type]
+            store,
+            pack.actions,
+            tools,
+            run,
+        )
+        if r.status != "succeeded":
+            raise BenchError(f"{spec.id}：{kind} {p.action_id} 失败：{r.status} {r.output}")
+        return r.status
+
+    submit("execute")
+    try:
+        live = _live(pack)
+        try:
+            ok, detail = run_verify(action, plan, live)
+        finally:
+            live.close()
+        if not ok:
+            raise BenchError(f"{spec.id}：执行 {p.action_id} 之后验证没有通过：{detail}")
+        post = open_backend(pack, f"inv_post_{ULID()}", Mode.RECORD, ObservationStore(SCRATCH), fixture)
+        post.phase, post.action = "post", p.action_id
+        try:
+            for tid, t in pack.tools.items():
+                if t.impl.args_schema is None or not any(
+                    f.is_required() for f in t.impl.args_schema.model_fields.values()
+                ):
+                    post.call(tid)
+        finally:
+            post.close()
+    finally:
+        submit("rollback")  # 修复改的是集群设置：不回滚的话，撤销故障之后集群仍然带着修复动作的改动
+    return f"{p.action_id} 已执行、验证通过（{detail}），post 已录制，已回滚"
+
+
 def _target_version() -> str:
     c = resolve_credential("es-readonly")
     http = ReadOnlyHttp(c.url, c.user, c.password)
@@ -250,6 +333,8 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
             tb = open_backend(pack, f"inv_rec_{ULID()}", Mode.RECORD, ObservationStore(SCRATCH), fixture)
             try:
                 sweep(pack, tb)
+                # M3 D11：有标准修复的场景，再录一段"执行之后"（回放执行器和 verify 节点用）
+                post_note = remediate_and_record_post(pack, spec, fixture, tb) if spec.remediation else None
             finally:
                 tb.close()
         finally:
@@ -285,6 +370,7 @@ def record(pack_name: str, scenario_id: str, n: int, log: Callable[[str], None] 
                 "recorded_at": ex.metadata.recorded_at.isoformat(),
                 "sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
                 "bytes": fixture.stat().st_size,
+                "post": post_note,
             }
         )
         log(f"{ex.id}：症状在 {took} 秒后出现，录制 {fixture.stat().st_size // 1024} KB")

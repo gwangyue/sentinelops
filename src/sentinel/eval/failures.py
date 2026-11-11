@@ -34,6 +34,8 @@ FIX_HINTS = {
     "over_escalation": "调整升级的判断条件",
     "under_escalation": "调整升级的判断条件",
     "budget_exceeded": "工具输出太大，或者调查方向发散",
+    "remediation_failed": "看执行结果和验证失败的原因：动作选错、参数不够，还是验证条件太严",
+    "remediation_not_recorded": "给这个动作补录 post 阶段，或者确认它是不是更合适的动作",
 }
 # 多个标签同时出现时，建议先处理哪个：按 06 §6.1 的优先级（unsafe 最高）
 PRIORITY = list(FIX_HINTS)
@@ -69,6 +71,10 @@ def rule_tags(s: RunScore, out: dict[str, Any], truth: ExampleOutputs) -> list[s
         tags.append("under_escalation")
     if str(out.get("escalate_reason") or "").startswith("budget"):
         tags.append("budget_exceeded")
+    if out.get("remediation") == "not_recorded":
+        tags.append("remediation_not_recorded")  # 提议的动作和录制时执行的不一样：修复结果没法判断
+    if s.remediation_completed is False:
+        tags.append("remediation_failed")
     return tags
 
 

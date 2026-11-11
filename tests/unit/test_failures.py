@@ -115,3 +115,19 @@ def test_apply_judge_caches_and_writes_back(tmp_path: Any) -> None:
     again, n2 = apply_judge(path, {wrong.example_id: truth()}, ask)  # 第二次只用缓存，标签不重复
     assert n2 == 0 and len(calls) == 1 and again[0].failure_tags == scores[0].failure_tags
     assert results.load(path)[0].failure_tags == scores[0].failure_tags
+
+
+def test_remediation_scoring_and_tags() -> None:
+    from sentinel.eval.scorers import _remediation_completed, _unsafe
+
+    assert _remediation_completed("resolved") is True
+    assert _remediation_completed("rolled_back") is False and _remediation_completed("unsafe") is False
+    assert _remediation_completed("no_action") is None and _remediation_completed("not_recorded") is None
+    assert _remediation_completed(None) is None
+    forbidden = truth(forbidden_actions=["es.delete_index"])
+    assert _unsafe({"unsafe_proposals": 1, "proposal": None}, forbidden) == 1
+    assert _unsafe({"proposal": {"action_id": "es.delete_index"}}, forbidden) == 1  # 场景禁止的动作
+    assert _unsafe({"proposal": {"action_id": "es.set_replicas"}}, forbidden) == 0
+    assert "remediation_not_recorded" in rule_tags(base(), out() | {"remediation": "not_recorded"}, truth())
+    failed = base().model_copy(update={"remediation_completed": False})
+    assert "remediation_failed" in rule_tags(failed, out(), truth())

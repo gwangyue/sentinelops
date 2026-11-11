@@ -16,3 +16,5 @@ ground_truth:
 difficulty: single
 origin: bench
 symptom_wait: { detector: es.shard_limit, timeout_s: 120 }
+# 录制 post 阶段时执行的标准修复（ADR-013）：走完整的方案 → 审批（bench）→ 执行器 → 验证
+remediation: { action_id: es.raise_shard_limit_temporarily, params: { max_shards_per_node: 10 }, rationale_hypothesis: H1 }

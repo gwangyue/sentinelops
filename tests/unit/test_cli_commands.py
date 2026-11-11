@@ -17,6 +17,10 @@ EXPECTED = {
     ("dataset", "streams"),
     ("investigations", "context"),
     ("version", "freeze"),
+    ("approvals", "list"),
+    ("approvals", "show"),
+    ("approvals", "approve"),
+    ("approvals", "reject"),
 }
 
 

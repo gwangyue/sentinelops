@@ -14,3 +14,5 @@ ground_truth:
 difficulty: distractor
 origin: bench
 symptom_wait: { detector: es.unassigned_shards, timeout_s: 180 }   # 要等 data-2 重启并重新加入：实测 78–134 秒，120 秒偶尔不够（M2 D6）
+# 录制 post 阶段时执行的标准修复（ADR-013）：走完整的方案 → 审批（bench）→ 执行器 → 验证
+remediation: { action_id: es.enable_allocation, params: {}, rationale_hypothesis: H1 }

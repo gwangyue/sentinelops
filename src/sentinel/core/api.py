@@ -11,7 +11,7 @@ from sentinel.core.credentials import resolve as resolve_credential
 from sentinel.core.detect import DetectResult, load_env, run_detect
 from sentinel.core.diagnosis.evidence import ClaimCheck, check_evidence, support_rate
 from sentinel.core.graph.investigation import InvState
-from sentinel.core.graph.remediate import Remediation
+from sentinel.core.graph.remediate import Remediation, build_plan, execution_keys, request_approval, run_verify
 from sentinel.core.graph.run import current_version, investigate, load_packs, make_deps, patrol, resume
 from sentinel.core.llm.chat import chat_model
 from sentinel.core.llm.config import load_models_config
@@ -50,10 +50,12 @@ __all__ = [
     "StoreMemoryProvider",
     "ToolBackend",
     "build_fingerprint",
+    "build_plan",
     "chat_model",
     "check_evidence",
     "current_version",
     "embed",
+    "execution_keys",
     "investigate",
     "load_env",
     "load_memory_policy",
@@ -65,9 +67,11 @@ __all__ = [
     "open_backend",
     "open_store",
     "patrol",
+    "request_approval",
     "resolve_credential",
     "resume",
     "run_detect",
+    "run_verify",
     "support_rate",
     "write_confirmed",
 ]

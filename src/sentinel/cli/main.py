@@ -6,10 +6,13 @@
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 from ulid import ULID
+
+if TYPE_CHECKING:
+    from sentinel.governance.remediation_store import PgRemediationStore
 
 app = typer.Typer(no_args_is_help=True, help="SentinelOps 运维 Agent")
 pack_app = typer.Typer(no_args_is_help=True, help="专家包")
@@ -28,6 +31,8 @@ app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(bench_app, name="bench")
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(eval_app, name="eval")
+approvals_app = typer.Typer(no_args_is_help=True, help="审批（03 §4.4；02 §3.4：审批不经过 LLM）")
+app.add_typer(approvals_app, name="approvals")
 
 # 观测记录的原始输出放在仓库根目录的 var/ 下（已加入 .gitignore）
 OBS_ROOT = Path("var/observations")
@@ -146,8 +151,11 @@ def patrol(
     pack: Annotated[str, typer.Option()] = "es",
     backend: Annotated[str, typer.Option(help="live | record | replay")] = "live",
     fixture: Annotated[Path | None, typer.Option(help="record / replay 的录制文件")] = None,
+    mode: Annotated[
+        str, typer.Option(help="report_only（巡检，默认）| remediate（诊断后提议修复，等审批）")
+    ] = "report_only",
 ) -> None:
-    """巡检一次：没有问题就结束（不调用 LLM）；有问题就只读诊断并出报告（02 §2）。"""
+    """巡检一次：没有问题就结束（不调用 LLM）；有问题就诊断。remediate 模式下提议修复并停在审批（02 §3）。"""
     import time
 
     from sentinel.core.graph.run import patrol as run_patrol
@@ -156,7 +164,7 @@ def patrol(
 
     t0 = time.monotonic()
     try:
-        s = run_patrol(target, pack, Mode(backend), fixture)
+        s = run_patrol(target, pack, Mode(backend), fixture, inv_mode=mode)
     except FreezeError as e:
         typer.echo(f"拒绝开始调查：{e}", err=True)
         raise typer.Exit(1) from e
@@ -166,6 +174,12 @@ def patrol(
     else:
         typer.echo(f"{s['inv_id']}  状态 {s['status']}  问题 {len(s['findings'])} 个  用时 {took:.1f} 秒")
         typer.echo(f"查看：sentinel investigations show {s['inv_id']}")
+        if s.get("approval_id") and "__interrupt__" in s:
+            pl = s.get("plan") or {}
+            typer.echo(f"修复方案 {pl['action_id']} {pl['params']}  预演 {pl['dry_run_result']}")
+            typer.echo(f"等待审批：sentinel approvals approve {s['approval_id']} --as <你的名字>")
+        elif s.get("remediation"):
+            typer.echo(f"修复：{s['remediation']}")
 
 
 @inv_app.command("list")
@@ -303,6 +317,9 @@ def eval_run(
     dataset_tag: Annotated[str | None, typer.Option(help="数据集版本标签（必填，不能是 latest）")] = None,
     reps: Annotated[int, typer.Option(help="每个用例重复几次")] = 3,
     version: Annotated[str | None, typer.Option(help="只能等于当前版本；不填就是当前版本")] = None,
+    mode: Annotated[
+        str, typer.Option(help="report_only | remediate（M3：修复段用回放执行器，审批由 sim:eval 模拟）")
+    ] = "report_only",
 ) -> None:
     """在回放模式下评测当前版本（06 §9）。"""
     from sentinel.core.versioning.freeze import FreezeError
@@ -311,7 +328,7 @@ def eval_run(
     from sentinel.eval.stats.bootstrap import stability
 
     try:
-        s = run(pack, split, dataset_tag, reps, version)
+        s = run(pack, split, dataset_tag, reps, version, mode)
     except (EvalGuardError, EvalError, FreezeError) as e:
         typer.echo(f"拒绝评测：{e}", err=True)
         raise typer.Exit(1) from e
@@ -468,6 +485,115 @@ def eval_clusters(
         typer.echo(f"  {c.runs:>3}  {' + '.join(c.tags):<45} {c.examples} 个用例  样例：{c.sample}")
     nxt = next_step(cs)
     typer.echo(f"建议下一步：{nxt} → {FIX_HINTS.get(nxt.removeprefix('judge:'), '看评审理由')}" if nxt else "没有失败")
+
+
+def _rem_store() -> "PgRemediationStore":
+    from sentinel.core.graph.run import PG_URL
+    from sentinel.governance.remediation_store import PgRemediationStore
+
+    return PgRemediationStore(PG_URL)
+
+
+@approvals_app.command("list")
+def approvals_list() -> None:
+    """最近的审批请求和状态。"""
+    from datetime import UTC, datetime
+
+    st = _rem_store()
+    for r in st.list_approval_requests():
+        d = st.get_decision(r.id)
+        state = d.decision if d else ("expired" if datetime.now(UTC) > r.expires_at else "pending")
+        plan = st.get_plan(r.plan_id)
+        typer.echo(
+            f"{r.id}  {state:<8} {plan.action_id if plan else '?':<34} 到期 {r.expires_at:%m-%d %H:%M}  {r.plan_id}"
+        )
+
+
+@approvals_app.command("show")
+def approvals_show(approval_id: str) -> None:
+    """审批人要看的全部内容（02 §3.3）：动作、参数、前置检查、预演、回滚、验证条件、有效期、方案哈希。"""
+    from sentinel.core.packs_registry import load_pack
+
+    st = _rem_store()
+    r = st.get_approval_request(approval_id)
+    plan = st.get_plan(r.plan_id) if r else None
+    if r is None or plan is None:
+        raise typer.BadParameter(f"没有审批请求 {approval_id}")
+    spec = load_pack("es").actions[plan.action_id]
+    d = st.get_decision(r.id)
+    typer.echo(f"审批 {r.id}   调查 {plan.investigation_id}   状态 {d.decision if d else 'pending'}")
+    typer.echo(f"  动作      {plan.action_id}（风险：{spec.risk}，依据 {plan.rationale_hypothesis}）")
+    typer.echo(f"  参数      {json.dumps(plan.params, ensure_ascii=False)}")
+    typer.echo(f"  前置检查  {json.dumps(plan.precheck_snapshot, ensure_ascii=False)}")
+    typer.echo(f"  预演      {json.dumps(plan.dry_run_result, ensure_ascii=False)}  上限 {spec.max_blast_radius}")
+    typer.echo(f"  回滚      {plan.rollback_plan}")
+    typer.echo(f"  验证条件  {spec.verify.predicate.split(':')[-1]}，{spec.verify.timeout_s} 秒内达成")
+    typer.echo(f"  有效期    至 {r.expires_at:%Y-%m-%d %H:%M:%S %Z}")
+    typer.echo(f"  方案哈希  {plan.plan_hash}")
+
+
+def _decide(approval_id: str, decision: Literal["approved", "rejected"], who: str, reason: str | None) -> None:
+    from datetime import UTC, datetime
+
+    from sentinel.contracts import ApprovalDecision
+    from sentinel.core.graph.run import resume_online
+    from sentinel.core.store import open_store
+    from sentinel.core.toolbackend import Mode
+    from sentinel.governance.remediation_store import DuplicateError
+
+    st = _rem_store()
+    r = st.get_approval_request(approval_id)
+    plan = st.get_plan(r.plan_id) if r else None
+    if r is None or plan is None:
+        raise typer.BadParameter(f"没有审批请求 {approval_id}")
+    try:
+        st.put_decision(
+            ApprovalDecision(
+                approval_id=approval_id,
+                decision=decision,
+                approver=f"human:{who}",
+                reason=reason,
+                decided_at=datetime.now(UTC),
+            )
+        )
+    except DuplicateError as e:
+        typer.echo(f"拒绝：{e}（一个审批只能决定一次）", err=True)
+        raise typer.Exit(1) from e
+    store = open_store()
+    # 07 §4：审批人不能审批自己发起的调查——第一版不强制，只记进审计，周报里提示
+    store.append_audit(
+        investigation_id=plan.investigation_id,
+        agent_version=None,
+        actor=f"human:{who}",
+        type="approval.decided",
+        payload={"approval_id": approval_id, "decision": decision, "plan_hash": r.plan_hash, "reason": reason},
+    )
+    typer.echo(
+        f"已{'批准' if decision == 'approved' else '拒绝'} {approval_id}（方案哈希 {r.plan_hash[:16]}…），"
+        f"继续调查 {plan.investigation_id}"
+    )
+    out = resume_online(plan.investigation_id, Mode.LIVE)
+    typer.echo(f"{plan.investigation_id}  状态 {out.get('status')}  修复 {out.get('remediation')}")
+
+
+@approvals_app.command("approve")
+def approvals_approve(
+    approval_id: str,
+    who: Annotated[str, typer.Option("--as", help="审批人身份（第一版就是 CLI 传入的名字，07 §4）")],
+    reason: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """批准并继续调查：执行器（独立进程）会重新校验哈希、有效期、幂等和前置检查之后才执行。"""
+    _decide(approval_id, "approved", who, reason)
+
+
+@approvals_app.command("reject")
+def approvals_reject(
+    approval_id: str,
+    who: Annotated[str, typer.Option("--as", help="审批人身份")],
+    reason: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """拒绝：调查以"只出报告"结束，不执行任何动作。"""
+    _decide(approval_id, "rejected", who, reason)
 
 
 @eval_app.command("curve")
