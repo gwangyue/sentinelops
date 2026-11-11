@@ -16,6 +16,9 @@ from sentinel.sdk import ActionContext, CheckResult, ExecContext, ToolCaller, Ve
 ENABLE = "cluster.routing.allocation.enable"
 HIGH = "cluster.routing.allocation.disk.watermark.high"
 FLOOD = "cluster.routing.allocation.disk.watermark.flood_stage"
+# ES 9：显式设置 high 之后，high.max_headroom 的默认值从 150GB 变成 -1，和 low 的 200GB 冲突，ES 返回 400
+# （M3 D11 录制时实测）。所以 high 和它的 headroom 一起设，headroom 用 ES 的默认值 150GB
+HIGH_HEADROOM = "cluster.routing.allocation.disk.watermark.high.max_headroom"
 MAX_SHARDS = "cluster.max_shards_per_node"
 
 
@@ -82,7 +85,13 @@ def raise_watermark_precheck(ctx: ActionContext) -> CheckResult:
     rows = _raw(ctx.tools, "es.cat_allocation")
     used = {r["node"]: float(r["disk.percent"]) for r in rows if r.get("disk.percent") not in (None, "")}
     over = sorted(n for n, p in used.items() if p >= high)
-    snap = {"before": _explicit(s, HIGH), "high": high, "flood": flood, "nodes_over_high": over}
+    snap = {
+        "before": _explicit(s, HIGH),
+        "before_headroom": _explicit(s, HIGH_HEADROOM),
+        "high": high,
+        "flood": flood,
+        "nodes_over_high": over,
+    }
     if not over:
         return CheckResult(False, f"没有节点超过高水位 {high:g}%", snap)
     if not high < want < flood:
@@ -97,11 +106,18 @@ def raise_watermark_dry_run(ctx: ActionContext) -> dict[str, Any]:
 
 
 def raise_watermark_execute(ctx: ExecContext) -> dict[str, Any]:
-    return dict(ctx.http.put("/_cluster/settings", {"persistent": {HIGH: f"{float(ctx.params['high_pct']):g}%"}}))
+    body = {HIGH: f"{float(ctx.params['high_pct']):g}%", HIGH_HEADROOM: "150GB"}
+    return dict(ctx.http.put("/_cluster/settings", {"persistent": body}))
 
 
 def raise_watermark_rollback(ctx: ExecContext) -> dict[str, Any]:
-    return _restore(ctx, HIGH)
+    # 两项一起按原样恢复：只恢复 high 的话，留下的 headroom 显式值会改变以后的水位计算
+    snap = ctx.precheck_snapshot
+    body = {
+        scope: {HIGH: snap["before"].get(scope), HIGH_HEADROOM: snap["before_headroom"].get(scope)}
+        for scope in ("persistent", "transient")
+    }
+    return dict(ctx.http.put("/_cluster/settings", body))
 
 
 def green_verify(ctx: ActionContext) -> VerifyResult:

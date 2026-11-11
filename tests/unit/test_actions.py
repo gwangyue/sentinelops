@@ -126,3 +126,13 @@ def test_store_rejects_second_decision_and_second_result() -> None:
     from sentinel.governance.audit import event_hash
 
     assert e2.prev_hash == event_hash(e1)
+
+
+def test_raise_watermark_sets_headroom_and_rolls_back_both() -> None:
+    alloc = [{"node": "data-2", "disk.percent": "93"}]
+    pre = A.raise_watermark_precheck(ctx({"high_pct": 94}, es_cat_allocation=alloc))
+    w = FakeWrite()
+    A.raise_watermark_execute(ExecContext("es-target", {"high_pct": 94}, pre.snapshot, w))
+    A.raise_watermark_rollback(ExecContext("es-target", {"high_pct": 94}, pre.snapshot, w))
+    assert w.calls[0][2] == {"persistent": {A.HIGH: "94%", A.HIGH_HEADROOM: "150GB"}}  # ES 9 只设 high 会 400
+    assert w.calls[1][2]["persistent"] == {A.HIGH: None, A.HIGH_HEADROOM: None}
