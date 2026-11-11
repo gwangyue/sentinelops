@@ -6,7 +6,8 @@ risk: medium
 reversible: true
 params_schema:
   type: object
-  properties: { max_shards_per_node: { type: integer, minimum: 1, maximum: 1000 } }
+  properties:
+    max_shards_per_node: { type: integer, minimum: 1, maximum: 1000, description: "临时的每节点分片上限：必须大于当前上限，最多是当前上限的 2 倍（前置检查会拒绝更大的值）" }
   required: [max_shards_per_node]
   additionalProperties: false
 preconditions: ["sentinel.packs.es.actions.es_actions:shard_limit_precheck"]

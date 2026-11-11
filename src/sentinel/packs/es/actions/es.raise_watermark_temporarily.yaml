@@ -7,7 +7,8 @@ risk: medium
 reversible: true
 params_schema:
   type: object
-  properties: { high_pct: { type: number, minimum: 86, maximum: 94 } }
+  properties:
+    high_pct: { type: number, minimum: 86, maximum: 94, description: "低水位和高水位一起提高到的百分比：要高于磁盘吃紧节点的使用率，低于洪水位（默认 95）" }
   required: [high_pct]
   additionalProperties: false
 preconditions: ["sentinel.packs.es.actions.es_actions:raise_watermark_precheck"]

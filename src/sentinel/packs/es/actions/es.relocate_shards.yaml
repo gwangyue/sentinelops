@@ -8,7 +8,7 @@ params_schema:
   type: object
   properties:
     from_node: { type: string, minLength: 1, maxLength: 128 }
-    max_shards: { type: integer, minimum: 1, maximum: 20 }
+    max_shards: { type: integer, minimum: 1, maximum: 20, description: "最多迁移几个分片；目标节点的磁盘使用率要比高水位低 5 个百分点以上" }
   required: [from_node, max_shards]
   additionalProperties: false
 preconditions: ["sentinel.packs.es.actions.es_actions:relocate_precheck"]

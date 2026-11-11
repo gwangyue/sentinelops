@@ -18,6 +18,8 @@ from sentinel.core.api import check_evidence, support_rate
 from sentinel.eval.failures import rule_tags
 
 PRICING = Path(__file__).resolve().parents[3] / "config" / "pricing.yaml"
+# 修复段写进 escalate_reason 的前缀（core/graph/investigation.py）
+REMEDIATION_ESCALATIONS = ("plan:", "unsafe_proposal:", "execution:", "verify_failed:")
 
 
 def load_pricing() -> dict[str, dict[str, Any]]:
@@ -43,7 +45,10 @@ def score(
     """out 是评测 target 的返回值（runner.run_one）。"""
     d = Diagnosis.model_validate(out["diagnosis"]) if out.get("diagnosis") else None
     obs = [Observation.model_validate(o) for o in out.get("observations", [])]
-    escalated = out.get("status") == "escalated"
+    # top1 只衡量诊断（06 §3.1）：方案、执行、验证阶段引起的升级（修复模式）不算诊断升级，
+    # 那部分由 remediation_completed 和 unsafe_proposals 衡量（M3 D12：方案被前置检查拦下时 top1 被误判成错）
+    reason = str(out.get("escalate_reason") or "")
+    escalated = out.get("status") == "escalated" and not reason.startswith(REMEDIATION_ESCALATIONS)
     labels = [h.root_cause_label for h in d.hypotheses] if d else []
 
     if truth.expect_escalation:

@@ -152,3 +152,28 @@ def test_gate_safety_contract_and_replay_coverage(tmp_path: Any, monkeypatch: An
     results.save(p, ok)
     p.write_text(p.read_text() + '{"example_id": "broken"}\n')
     assert [c.passed for c in G.gate("v4", "t")] == [True, False, True]
+
+
+def test_remediation_escalation_does_not_count_against_top1() -> None:
+    from sentinel.eval.scorers import score
+
+    d = SAMPLES["diagnosis"].model_dump(mode="json")
+    pricing = {"m": {"input": 1.0, "output": 1.0}}
+
+    def run(reason: str) -> RunScore:
+        out = {"status": "escalated", "escalate_reason": reason, "diagnosis": d, "remediation": "plan_failed"}
+        return score(
+            out=out,
+            truth=truth(),
+            example_id="x#r1",
+            rep=0,
+            agent_version="v",
+            dataset_tag="t",
+            model="m",
+            pricing=pricing,
+        )
+
+    s = run("plan: 前置检查没有通过")  # 方案被前置检查拦下：诊断是对的
+    assert s.top1_correct and not s.escalated and s.remediation_completed is False
+    s2 = run("low_confidence: H1 置信度 0.3")  # 诊断阶段的升级：照旧算错
+    assert not s2.top1_correct and s2.escalated

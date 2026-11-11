@@ -8,7 +8,7 @@ params_schema:
   type: object
   properties:
     index: { type: string, minLength: 1, maxLength: 255, pattern: "^[a-z0-9][a-z0-9._-]*$" }
-    replicas: { type: integer, minimum: 0, maximum: 10 }
+    replicas: { type: integer, minimum: 0, maximum: 10, description: "新的副本数：不超过数据节点数 − 1（每个节点最多放一份拷贝）" }
   required: [index, replicas]
   additionalProperties: false
 preconditions: ["sentinel.packs.es.actions.es_actions:set_replicas_precheck"]
