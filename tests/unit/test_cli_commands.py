@@ -46,3 +46,18 @@ def test_expected_commands_registered() -> None:
     got = _paths(typer.main.get_command(app))
     missing = EXPECTED - got
     assert not missing, f"没有注册的命令：{sorted(missing)}"
+
+
+def test_confirm_only_when_paused_at_confirm() -> None:
+    # M3 独立审阅发现 2：还在等审批的调查不能确认根因，否则恢复时会被当成"审批被拒绝"关掉
+    from sentinel.cli.main import awaiting_confirmation
+
+    assert awaiting_confirmation(["plan.proposed", "approval.decided", "action.executed", "verify.passed"])
+    assert not awaiting_confirmation(["plan.proposed", "approval.requested"])  # 还在等审批
+    assert not awaiting_confirmation(["verify.passed", "investigation.closed"])  # 已经结束
+
+
+def test_heldout_uses_read_from_log() -> None:
+    from sentinel.eval.report import heldout_uses
+
+    assert len(heldout_uses("es")) == 2 and len(heldout_uses("mysql")) == 2  # 中断的那次也算

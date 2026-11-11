@@ -408,10 +408,16 @@ def eval_compare(
     elif by == "occurrence":
         if not stream:
             raise typer.BadParameter("--by occurrence 只用于 --stream")
+        # 根因标签按场景取（场景的真实答案不随重录变化）：事故流引用的录制可能已经被重录替换掉了
+        # （M3 D11 重录之后，ds-20261110-6 的 r5/r6 不在 es.jsonl 里了）
+        from sentinel.eval.dataset import load_scenarios
+        from sentinel.eval.stats.bootstrap import scenario_of
         from sentinel.eval.stream import load_streams, occurrences
 
-        labels = {e.id: e.outputs.root_cause_label for e in load_examples("es")}
-        occ = occurrences(load_streams("es"), labels)
+        scn = load_scenarios("es")
+        streams_ = load_streams("es")
+        labels = {e: scn[scenario_of(e)].ground_truth.root_cause_label for ids in streams_.values() for e in ids}
+        occ = occurrences(streams_, labels)
         groups["第 1 次遇到"] = {eid for eid, n in occ.items() if n == 1}
         groups["第 2 次及以后"] = {eid for eid, n in occ.items() if n >= 2}
     elif by is not None:
@@ -853,12 +859,21 @@ eval_app.add_typer(ablation_app, name="ablation")
 @ablation_app.command("memory")
 def ablation_memory(
     streams: Annotated[str, typer.Option(help="事故流的 split（只有 dev）")] = "dev",
-    control: Annotated[str, typer.Option(help="关闭记忆的版本")] = "v20",
-    treatment: Annotated[str, typer.Option(help="打开记忆的版本")] = "v23",
-    dataset_tag: Annotated[str, typer.Option(help="数据集版本标签")] = "ds-20261110-6",
+    control: Annotated[str | None, typer.Option(help="关闭记忆的版本（必填），例如 v20")] = None,
+    treatment: Annotated[str | None, typer.Option(help="打开记忆的版本（必填），例如 v23")] = None,
+    dataset_tag: Annotated[str | None, typer.Option(help="数据集版本标签（必填）")] = None,
 ) -> None:
-    """M-E1（08 M2 验收）：读两个版本已有的事故流结果，不重跑；输出增益、伤害率和区间（按第几次遇到分组）。"""
-    eval_compare(control, treatment, split=streams, dataset_tag=dataset_tag, by="occurrence", stream=True)
+    """M-E1（08 M2 验收）：读两个版本已有的事故流结果，不重跑；输出增益、伤害率和区间（按第几次遇到分组）。
+
+    版本和标签都必须显式给出（M2 独立审阅发现 3：写成默认值时，数据集换了新标签，这条命令会悄悄输出旧结果，
+    绕过了"评测必须指定数据集版本标签"的护栏，08 §6.4）。"""
+    from sentinel.eval.guards import require_dataset_tag
+
+    if not control or not treatment:
+        raise typer.BadParameter("--control 和 --treatment 必须显式给出")
+    eval_compare(
+        control, treatment, split=streams, dataset_tag=require_dataset_tag(dataset_tag), by="occurrence", stream=True
+    )
 
 
 @knowledge_app.command("index")
@@ -877,6 +892,11 @@ def knowledge_index(pack: Annotated[str, typer.Option()] = "es") -> None:
     typer.echo(f"{index_name(pack)}：{n} 段（来自 {len({s.doc_id.split('#')[0] for s in secs})} 篇 runbook）")
     for s in secs:
         typer.echo(f"  {s.doc_id:<26} {','.join(s.detectors):<55} {s.heading}")
+
+
+def awaiting_confirmation(audit_types: list[str]) -> bool:
+    """调查是否停在 confirm 节点：修复验证通过了，调查还没有结束（02 §3.4；M3 独立审阅发现 2）。"""
+    return "verify.passed" in audit_types and "investigation.closed" not in audit_types
 
 
 @inv_app.command("confirm")
@@ -899,6 +919,10 @@ def inv_confirm(
     rec = store.get_investigation(inv_id)
     if rec is None or rec.diagnosis is None:
         raise typer.BadParameter(f"调查 {inv_id} 不存在或没有诊断")
+    # 只有停在 confirm 的调查才能确认根因（02 §3.4：审批在修复前、确认在修复后，两者分开）：
+    # 验证通过、还没结束。否则恢复会把还在等审批的调查当成"审批被拒绝"关掉（M3 独立审阅发现 2）
+    if not awaiting_confirmation([e.type for e in store.audit_events(inv_id)]):
+        raise typer.BadParameter(f"调查 {inv_id} 没有停在等待确认根因（要先修复并验证通过；已经结束的调查不能再确认）")
     if not decline:
         if (root_cause is None) == (label is None):
             raise typer.BadParameter("--root-cause 和 --label 二选一（或者 --decline）")

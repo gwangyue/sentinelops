@@ -58,6 +58,10 @@ def process(
 
     def refuse(event: str, stage: str, reason: str) -> ExecutionResult:
         r = _result(req, "precheck_failed", {"stage": stage, "reason": reason})
+        # 拒绝也要写执行结果：线上的调查只靠轮询这个幂等键的结果，不写就会白等到超时、升级原因写错
+        # （M3 独立审阅发现 1）。这个键已经有结果时不覆盖：以第一次的结果为准
+        if store.get_execution(req.idempotency_key) is None:
+            store.put_execution(r)
         store.append_audit(investigation_id=inv, actor=ACTOR, type=event, payload={"plan_id": req.plan_id, **r.output})
         return r
 

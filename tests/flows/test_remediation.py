@@ -154,7 +154,8 @@ def test_executor_refuses_when_frozen_after_approval(harness: H, tmp_path: Path)
     approve(h)
     h.freeze_state.set(True, "测试", "human:ops")
     out = h.resume(s["inv_id"])
-    assert out["remediation"] == "exec_precheck_failed" and not h.rem_store.executions
+    assert out["remediation"] == "exec_precheck_failed"
+    assert [r.status for r in h.rem_store.executions.values()] == ["precheck_failed"]  # 拒绝也有记录，没有执行
     ev = [e for e in h.store.audit_events(s["inv_id"]) if e.type == "action.precheck_failed"]
     assert ev and ev[0].payload["stage"] == "frozen"
 

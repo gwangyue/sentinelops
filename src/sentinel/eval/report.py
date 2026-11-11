@@ -3,7 +3,7 @@
 负责：当前上线版本（datasets/version_decisions.yaml 里最新的 shipped）在每个专家包 dev 上的 top1 和区间；
       保留测试集用过几次、距离上次运行几天；线上修正补进数据集的条数；dev 里样本太少的难度组。
 不负责：来自审计的数字（governance/report.py）。
-设计里的 HELDOUT_LOG.md 没有单独建：heldout 的每次运行都留在 var/eval/*__heldout.jsonl，次数和时间从这些文件推出。
+保留测试集的使用次数和最近一次的日期读 datasets/HELDOUT_LOG.md（06 §5.2；中断的运行也算一次，结果文件里没有它）。
 """
 
 import re
@@ -20,6 +20,7 @@ from sentinel.eval.stats.bootstrap import interval
 
 DECISIONS = DATASETS / "version_decisions.yaml"
 CHANGELOG = DATASETS / "CHANGELOG.md"
+HELDOUT_LOG = DATASETS / "HELDOUT_LOG.md"
 FILE = re.compile(r"^v(\d+)(__remediate)?__(ds-[\w-]+)__(dev|heldout)\.jsonl$")
 MIN_SCENARIOS = 3  # dev 里某个难度组的场景少于这个数，区间没有意义（06 §4.3）
 HELDOUT_STALE_DAYS = 14
@@ -55,6 +56,18 @@ def tags_by_pack(path: Path = CHANGELOG) -> dict[str, list[str]]:
     return out
 
 
+def heldout_uses(pack: str, path: Path = HELDOUT_LOG) -> list[datetime]:
+    """HELDOUT_LOG.md 表格里这个领域的每一行（| 日期 | 里程碑 | 领域 | …）就是一次使用。"""
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) > 2 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", cells[0]) and cells[2] == pack:
+            out.append(datetime.fromisoformat(cells[0]).replace(tzinfo=UTC))
+    return out
+
+
 def pack_eval(pack: str, shipped: int | None, now: datetime, root: Path | None = None) -> PackEval:
     root = root or results.ROOT
     tags = tags_by_pack().get(pack, [])
@@ -68,8 +81,7 @@ def pack_eval(pack: str, shipped: int | None, now: datetime, root: Path | None =
         version, _, _, f = dev[-1]
         tag = FILE.match(f.name).group(3)  # type: ignore[union-attr]
         top1, low, high = interval(results.load(f))
-    held = [f for m, f in files if m.group(4) == "heldout"]
-    last = max((f.stat().st_mtime for f in held), default=None)
+    uses = heldout_uses(pack)
     examples = load_examples(pack)
     dev_scn = {e.scenario_id: e.metadata.difficulty for e in examples if e.split == "dev"}
     groups = Counter(dev_scn.values())
@@ -80,8 +92,8 @@ def pack_eval(pack: str, shipped: int | None, now: datetime, root: Path | None =
         top1=top1,
         low=low,
         high=high,
-        heldout_runs=len(held),
-        heldout_days_ago=None if last is None else (now - datetime.fromtimestamp(last, UTC)).days,
+        heldout_runs=len(uses),
+        heldout_days_ago=(now - max(uses)).days if uses else None,
         online_corrections=sum(1 for e in examples if e.metadata.origin == "online_correction"),
         small_groups={d: n for d, n in groups.items() if n < MIN_SCENARIOS},
     )

@@ -135,3 +135,15 @@ def test_replay_runner_switches_phase_only_for_recorded_action() -> None:
     st2, req2 = setup()
     r2 = process(req2, st2, SPECS, tools(), replay_runner(lambda aid: False), at(1))
     assert r2.status == "failed" and "PostNotRecorded" in r2.output["error"]
+
+
+def test_refusal_is_recorded_so_the_online_wait_ends(monkeypatch: Any) -> None:
+    # M3 独立审阅发现 1：拒绝执行时不写执行结果，线上的 queue_executor 只靠轮询结果，会白等到超时、升级原因写错
+    from sentinel.core.graph import run as R
+
+    monkeypatch.setattr(R.time, "sleep", lambda s: None)
+    st, req = setup()
+    r = process(req, st, SPECS, tools(), Runner(), at(1), frozen=lambda: True)
+    assert r.status == "precheck_failed" and r.output["stage"] == "frozen"
+    got = R.queue_executor(st, wait_s=0)("execute", req.plan_id, req.approval_id, req.idempotency_key)
+    assert got.status == "precheck_failed" and got.output["stage"] == "frozen"  # 不是"执行器没有返回结果"
