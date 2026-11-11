@@ -412,3 +412,33 @@ LangSmith 记录的费用约为每次调查 0.008 美元。样本只有几次，
 - **装了 matplotlib 之后 mypy 报错**：pillow 让 google-genai 签名里的 `PIL.Image` 类型变得可见，`list[str]` 不再能匹配（list 是不变的）。`embed.py` 改成 cast。
 - **"上下文召回率"依赖事实卡片的格式**：按 ` key=` 查找，换成原始 JSON 之后，72 次全部被标成 `retrieval_miss`。这是测量方法的问题，不是检索出了问题。
 - 版本：v25（评测工具链）、v26（E1 代码）、v27（E1 raw，不上线）。改回 facts 之后，组件和 v26 完全相同，复用了 v26；v28 = 曲线的改动，**M2 发布版本**。
+
+## M3 D10–D11（2026-11-11）：动作目录、方案、审批、独立执行器
+
+**做了什么**：
+- 契约：新增 `ActionProposal`，`ScenarioSpec.remediation`（ADR-013，人确认后解锁修改）。
+- 动作目录：5 个 ES 动作（`packs/es/actions/`），每个动作都有前置检查、预演、执行、回滚、验证；前置检查、预演、验证只用只读工具，回放模式下也能跑。
+- 调查图：plan → approve（只有 `interrupt()`）→ execute → verify。LLM 只输出 `ActionProposal`；`plan_hash`、审批 ID、幂等键全部由确定性代码生成。
+- 执行器：`python -m sentinel.exec`，独立进程、单独的写凭证，不依赖 core。执行前依次校验：哈希三处一致、审批通过且没过期、幂等、重新做一次前置检查。回放执行器和它共用这段校验代码。
+- CLI：`patrol --mode remediate`、`approvals list / show / approve / reject --as`。
+- 录制：11 个有标准修复的场景重录（22 条），每条带 post 阶段，新标签 `ds-20261111-1`。
+
+**结果**：
+
+| 检查 | 结果 |
+|---|---|
+| kind 上端到端（golden-demo 第 2→6 步） | 注入 → 诊断 → 提议 `raise_watermark_temporarily {high_pct: 94}` → `approvals approve --as approver` → 执行器（独立进程）执行 → 验证通过，状态 `resolved`。审计顺序：`plan.proposed → approval.requested → approval.decided（human:approver）→ action.executed（executor）→ verify.passed`，三种角色在同一条哈希链上 |
+| 执行器权限 | 只给具体的动作名（不用 `manage`）。实测：改集群设置、改索引设置、reroute 是 200；删除索引、读写文档、建索引、快照仓库、改角色都是 403 |
+| v31 修复模式评测（dev，72 次，回放执行器 + `sim:eval` 审批） | top1 1.00；**不安全提议 0**（06 §7.1 安全门槛通过）；有可用动作的 8 个场景 48 次全部 `resolved`；节点类 24 次模型都选了 `none`（动作目录里没有恢复节点的动作）；没有一次"录制里没有这个动作执行之后的状态" |
+| `make check` / `make demo-check` | 202 个测试通过；第 5、6 步强制运行时通过（M3 结束时打开） |
+
+**这一段的发现**：
+- **ES 9 的磁盘水位有两个坑**，录制时实测才发现，单元测试测不出来：
+  1. 只设 `watermark.high` 会被拒绝（400，`can't update low.max_headroom`）：显式设置水位之后，headroom 的默认值会变，和另一个水位冲突。要把对应的 `max_headroom` 一起显式设置。
+  2. 决定"新分片能不能放到这个节点"的是**低水位**，不是高水位。只提高高水位，93% 的节点仍然高于低水位 85%，新副本还是分配不上去。改成低水位和高水位一起提高，回滚恢复 4 项。
+- **回放模式下验证只检查一次**：第一版按 VerifySpec 轮询，回放的状态不会变，轮询会空转到 300 秒超时，测试跑了 5 分钟才发现。
+- **巡检停在审批时 CLI 报错**：图还没走到 report，状态里没有 `status`。
+- 修复后的录制必须先回滚修复、再撤销故障：修复改的是集群设置，不回滚会留在集群里，污染下一条录制。
+- 版本：v29（修复段）、v30（CLI 修复）、v31（水位动作修复，当前版本）。
+
+**还没做（M3 D12）**：confirm 节点和确认后写记忆（golden-demo 第 7、8 步）、`audit verify`、`freeze / unfreeze`、只做安全底线的上线门槛（`eval gate`）。
