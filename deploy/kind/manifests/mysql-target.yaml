@@ -1,4 +1,5 @@
-# mysql-target：MySQL 专家包的被管实例（M4 D13；00 §5"可扩展到 MySQL"）。单实例，内存上限 512Mi（kind 上已经有 3 个 ES 节点）。
+# mysql-target：MySQL 专家包的被管实例（M4 D13；00 §5"可扩展到 MySQL"）。单实例，内存上限 768Mi：
+# 最初设 512Mi，performance_schema 加上 57 个连接、再加几个 kubectl exec 的客户端进程就被 OOMKill（实测 2 次）。
 # 账号由 initdb 脚本创建，密码来自 Secret（kind-up.sh 首次运行时随机生成）：
 #   - sentinel-ro：只读（01 §6）：PROCESS + performance_schema 的 SELECT；读不到业务表
 #   - sentinel-exec：执行器（ADR-005）：只有 SYSTEM_VARIABLES_ADMIN（动作目录只会 SET GLOBAL max_connections）
@@ -52,8 +53,8 @@ spec:
             exec: { command: [sh, -c, 'mysqladmin ping -uroot -p"$MYSQL_ROOT_PASSWORD" --silent'] }
             periodSeconds: 5
           resources:
-            requests: { memory: 384Mi, cpu: 100m }
-            limits: { memory: 512Mi }
+            requests: { memory: 512Mi, cpu: 100m }
+            limits: { memory: 768Mi }
           volumeMounts:
             - { name: data, mountPath: /var/lib/mysql }
             - { name: init, mountPath: /docker-entrypoint-initdb.d }
