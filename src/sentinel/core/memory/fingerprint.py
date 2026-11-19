@@ -22,6 +22,13 @@ def _band(value: Any) -> str:
     return str(value).lower()
 
 
+# 对象只记类型：指纹不能带节点名，换一台机器仍算同类症状。
+# kinds 由 build() 从事实键前缀推出来，例如 Fact(subject="es-target-es-data-2", key="node.disk_used_pct")
+# → {"es-target-es-data-2": "node"}。
+# 例（本机磁盘水位调查 inv_01M74E2QD8GN52NJHBDXX1JMYR）：
+#   f.object_ref=None, kinds=…                         → "cluster"（集群级 Finding）
+#   f.object_ref="es-target-es-data-2", kinds 如上      → "node"
+#   f.object_ref="logs-2026.10", kinds 对不上           → "object"（没有对应事实时的兜底）
 def _object_type(f: Finding, kinds: dict[str, str]) -> str:
     """对象类型不记具体名称（05 §3.2）：没有 object_ref 就是整个目标（记作 cluster）；
     否则取"主体等于 object_ref 的事实"的键前缀（node.disk_used_pct → node），由专家包的事实键决定，
@@ -31,6 +38,14 @@ def _object_type(f: Finding, kinds: dict[str, str]) -> str:
     return kinds.get(f.object_ref, "object")
 
 
+# 变更只记"改了哪条路径 / 哪类集合"，不记节点 id 和设置值（防投毒、同类变更能合并）。
+# 例（test_change_keys）：
+#   Change(path="persistent.cluster.routing.allocation.enable", before="（无）", after="none")
+#     → "cluster.routing.allocation.enable"   # 去掉 persistent/transient 前缀
+#   Change(path="nodes.abc123", before="{name=n2}", after="（无）")
+#     → "nodes:removed"                       # 集合成员消失，不记 abc123
+#   成员新增 before="（无）" → "nodes:added"；值变了 → "nodes:changed"
+# build() 还会加上工具短名，指纹里是 "cluster_settings:cluster.routing.allocation.enable"。
 def _change_key(c: Change) -> str:
     parts = c.path.split(".")
     if parts[0] in ("persistent", "transient"):
@@ -40,6 +55,18 @@ def _change_key(c: Change) -> str:
     return f"{parts[0]}:{direction}"
 
 
+# 输入（tests/unit/test_memory.py disk_fp：节点 es-target-es-data-2、磁盘 92%）：
+#   findings = [Finding(detector=es.unassigned_shards, object_ref=None),
+#               Finding(detector=es.disk_watermark, object_ref="es-target-es-data-2")]
+#   sheets   = [FactSheet(facts=[
+#                  Fact(key="cluster.status", subject="cluster", value="yellow", status=abnormal),
+#                  Fact(key="node.disk_used_pct", subject="es-target-es-data-2", value=92.0, status=abnormal)])]
+#   changes  = []
+# 输出（节点名和 92 都丢掉，数值只记档位 high）：
+#   {"detectors": ["es.disk_watermark", "es.unassigned_shards"],
+#    "abnormal_facts": ["cluster.status:yellow", "node.disk_used_pct:high"],
+#    "objects": ["cluster", "node"], "changes": []}
+# 换 data-0 / 95.5% 输出相同。有设置变更时 changes 例如 ["cluster_settings:cluster.routing.allocation.enable"]。
 def build(findings: Sequence[Finding], sheets: Sequence[FactSheet], changes: Sequence[Change]) -> dict[str, list[str]]:
     """返回 MemoryRecord.symptom_fingerprint 的结构（03 §6.4）。"""
     facts = [x for s in sheets for x in s.facts]
@@ -52,6 +79,10 @@ def build(findings: Sequence[Finding], sheets: Sequence[FactSheet], changes: Seq
     }
 
 
+# 输出示例：
+#   ["det:es.disk_watermark", "det:es.unassigned_shards",
+#    "fact:cluster.status:yellow", "fact:cluster.unassigned_shards:high", "fact:node.disk_used_pct:high",
+#    "obj:cluster", "obj:node", "chg:cluster_settings:cluster.routing.allocation.enable"]
 def tokens(fp: Mapping[str, Sequence[str]]) -> list[str]:
     return (
         [f"det:{x}" for x in fp.get("detectors", [])]

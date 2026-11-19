@@ -34,8 +34,8 @@ class FileIndex:
 
     def add_observation(self, obs: Observation) -> None:
         p = self.root / obs.investigation_id / "index.jsonl"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as f:
+        p.parent.mkdir(parents=True, exist_ok=True)  # 确保索引目录存在
+        with p.open("a", encoding="utf-8") as f:  # 追加写入索引
             f.write(obs.model_dump_json() + "\n")
 
     def observations(self, investigation_id: str) -> list[Observation]:
@@ -74,7 +74,8 @@ class ObservationStore:
         data = _raw_bytes(raw)
         path = self.root / investigation_id / f"{obs_id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        path.write_bytes(data)  # 写入 Tool原始输出
+
         obs = Observation(
             id=obs_id,
             investigation_id=investigation_id,
@@ -84,15 +85,16 @@ class ObservationStore:
             status=status,
             raw_ref=str(path),
             raw_sha256=hashlib.sha256(data).hexdigest(),
-            digest=digest,
+            digest=digest,  # 摘要
             created_at=datetime.now(UTC),
         )
-        self.index.add_observation(obs)
+        self.index.add_observation(obs)  # 写入observation索引,
         return obs
 
     def list(self, investigation_id: str) -> list[Observation]:
         return self.index.observations(investigation_id)
 
+    # 获取Observation记录、原始输出
     def get(self, investigation_id: str, obs_id: str) -> tuple[Observation, Any]:
         """返回观测记录和原始输出。原始文件被改过就报错：证据链不能建立在被篡改的数据上。"""
         obs = next((o for o in self.list(investigation_id) if o.id == obs_id), None)

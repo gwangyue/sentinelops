@@ -18,7 +18,7 @@ ENV_DIR = Path(__file__).resolve().parents[3] / "env"
 
 
 def load_env(target: str, env_dir: Path = ENV_DIR) -> dict[str, Any]:
-    p = env_dir / f"{target}.yaml"
+    p = env_dir / f"{target}.yaml"  # eg env/es-target.yaml
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {} if p.exists() else {}
 
 

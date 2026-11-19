@@ -56,10 +56,12 @@ def retrieve(
         "text": store.search_text(text, namespace, n),
         "knn": store.search_knn(embed([text])[0], namespace, n),
     }
+    # 融合排序，返回融合后的 ID 列表（分数相同时按 ID 排序，保证确定）
     order = rrf(rankings, policy["recall"]["weights"])[:n]
+    # 各路按名次给分（w / (k + rank)），再除以"每一路都排第一"的满分，归一化到 [0, 1]。
     rrf_norm = _rank_feature(rankings, policy["recall"]["weights"])
     w = policy["rerank"]["weights"]
-    out = []
+    out = []  # 存储最终的候选记忆
     for mid in order:
         m = store.get(mid)
         if m is None or m.record.invalidated:

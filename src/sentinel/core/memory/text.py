@@ -6,6 +6,24 @@
 
 from collections.abc import Mapping, Sequence
 
+# 症状指纹的示例 input example
+# {
+#  "detectors": ["es.disk_watermark", "es.unassigned_shards"],
+#  "abnormal_facts": [
+#    "cluster.status:yellow",
+#    "cluster.unassigned_shards:high",
+#    "node.disk_used_pct:high",
+#  ],
+#  "objects": ["cluster", "node"],
+#  "changes": [],
+# }
+#
+# 输出示例：
+#   detectors: es.disk_watermark, es.unassigned_shards
+#   | abnormal: cluster.status yellow, cluster.unassigned_shards high, node.disk_used_pct high
+#   | objects: cluster, node
+# （实际是一行，这里为了排版折开）
+
 
 def symptom_text(fp: Mapping[str, Sequence[str]]) -> str:
     parts = [f"detectors: {', '.join(fp.get('detectors', [])) or 'none'}"]

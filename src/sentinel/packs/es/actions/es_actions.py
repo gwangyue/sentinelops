@@ -13,7 +13,7 @@ from typing import Any
 from sentinel.packs.es.thresholds import DEFAULTS, setting
 from sentinel.sdk import ActionContext, CheckResult, ExecContext, ToolCaller, VerifyResult
 
-ENABLE = "cluster.routing.allocation.enable"
+ENABLE = "cluster.routing.allocation.enable"  # 启用分配
 HIGH = "cluster.routing.allocation.disk.watermark.high"
 FLOOD = "cluster.routing.allocation.disk.watermark.flood_stage"
 LOW = "cluster.routing.allocation.disk.watermark.low"
@@ -51,10 +51,11 @@ def _health(tools: ToolCaller) -> dict[str, Any]:
 # ---------- es.enable_allocation ----------
 
 
+# 前置检查：检查是否需要启用分配
 def enable_allocation_precheck(ctx: ActionContext) -> CheckResult:
-    s = _raw(ctx.tools, "es.cluster_settings")
-    before = _explicit(s, ENABLE)
-    effective = before["transient"] or before["persistent"] or "all"
+    s = _raw(ctx.tools, "es.cluster_settings")  # 获取集群设置
+    before = _explicit(s, ENABLE)  # 获取设置值，eg: {"persistent": "all", "transient": "all"}
+    effective = before["transient"] or before["persistent"] or "all"  # 获取集群设置的值
     if effective == "all":
         return CheckResult(False, f"{ENABLE} 已经是 all，这个动作不会有效果", {"before": before})
     return CheckResult(True, f"{ENABLE}={effective}", {"before": before})

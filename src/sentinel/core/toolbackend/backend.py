@@ -23,9 +23,9 @@ from sentinel.sdk import ToolCallError, ToolResult, fit_budget, open_read
 
 
 class Mode(StrEnum):
-    LIVE = "live"
-    RECORD = "record"
-    REPLAY = "replay"
+    LIVE = "live"  # 实时模式，访问集群，不录制，额外参数控制 报告模式/修复模式
+    RECORD = "record"  # 录制模式，访问集群，存储录制结果，不走诊断
+    REPLAY = "replay"  # 回放模式，不访问集群，
 
 
 class ReplayIndex:

@@ -6,6 +6,8 @@ score(doc) = Σ_路 w_路 / (k + rank_路(doc))，k=60 和 ES 默认的 rank_con
 from collections.abc import Mapping, Sequence
 
 
+# { rrf_score: 0.30, fp_jaccard: 0.30, recency: 0.10, outcome: 0.10, corrected: 0.05, helpful_ratio: 0.15 }
+# 权重：rrf_score: 0.30, fp_jaccard: 0.30, recency: 0.10, outcome: 0.10, corrected: 0.05, helpful_ratio: 0.15
 def rrf(rankings: Mapping[str, Sequence[str]], weights: Mapping[str, float] | None = None, k: int = 60) -> list[str]:
     """rankings：路名 → 按相关性排好序的文档 ID。返回融合后的 ID 列表（分数相同时按 ID 排序，保证确定）。"""
     scores: dict[str, float] = {}

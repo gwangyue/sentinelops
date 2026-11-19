@@ -30,7 +30,7 @@ class LoadedTool:
 
 @dataclass(frozen=True)
 class LoadedPack:
-    manifest: PackManifest
+    manifest: PackManifest  # 专家包 manifest
     tools: dict[str, LoadedTool]
     detectors: dict[str, Detector]
     fact_builders: list[FactBuilder]
@@ -48,21 +48,21 @@ def _resolve(entry: str) -> Any:
 
 def load_pack(name: str) -> LoadedPack:
     text = importlib.resources.files(f"sentinel.packs.{name}").joinpath("pack.yaml").read_text(encoding="utf-8")
-    manifest = PackManifest.model_validate(yaml.safe_load(text))
+    manifest = PackManifest.model_validate(yaml.safe_load(text))  # 加载专家包 manifest
     tools = {}
     for t in manifest.tools:
         impl = _resolve(t.entry)
         if not isinstance(impl, ReadTool):
             raise PackLoadError(f"工具 {t.id} 的 entry 不是 ReadTool")
-        tools[t.id] = LoadedTool(t, impl)
+        tools[t.id] = LoadedTool(t, impl)  # 加载工具, 字典：名字 -> LoadedTool
     detectors = {d.id: _resolve(d.entry) for d in manifest.detectors}
     fact_builders = [_resolve(f.entry) for f in manifest.fact_builders]
     pack_dir = Path(str(importlib.resources.files(f"sentinel.packs.{name}")))
-    actions = load_action_specs(pack_dir, manifest.actions)
+    actions = load_action_specs(pack_dir, manifest.actions)  # 加载动作规格 字典：名字 -> ActionSpec
     return LoadedPack(manifest, tools, detectors, fact_builders, actions)
 
 
 def discover_packs() -> list[str]:
     """sentinel/packs/ 下所有带 pack.yaml 的子包名，按名字排序（排序让 AgentVersion 的组件顺序稳定）。"""
-    root = importlib.resources.files("sentinel.packs")
+    root = importlib.resources.files("sentinel.packs")  # 专家包根目录
     return sorted(d.name for d in root.iterdir() if d.is_dir() and d.joinpath("pack.yaml").is_file())
