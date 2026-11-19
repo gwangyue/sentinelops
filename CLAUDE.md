@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：M4 进行中。D13 完成（通用化 tag `m4-base` + MySQL 专家包，core/exec 相对 m4-base 零改动）；D14 完成（治理周报、MCP 只读服务）。M2/M3 独立审阅已补做；M4 零改动验收有 1 条例外（exec/core.py，M3 审阅发现 1 的修复）。下一步 D15–D16（Helm、Terraform、EKS）
+- 里程碑：M4 进行中。D13 完成（通用化 tag `m4-base` + MySQL 专家包，core/exec 相对 m4-base 零改动）；D14 完成（治理周报、MCP 只读服务）。M2/M3 独立审阅已补做；M4 零改动验收有 5 条例外（exec/core.py，M3 审阅发现 1 的修复；core/memory/ 同分排序、乐观锁、易混淆提示跳过失效记忆，05 实现说明；core/graph + governance/remediation_store 同一集群修复互斥、执行超时撤回请求，02 实现说明；core/diagnosis/evidence.py 证据检查去掉匹配的状态前缀，06 §3.1；core/store 去重窗口不算判为重复的调查，02 实现说明）。下一步 D15–D16（Helm、Terraform、EKS）
 - 最新版本：v41（L3 开，L4、L5 不上线；es + mysql 两个专家包）· 数据集标签：es `ds-20261111-1`（17 个场景 34 条）、mysql `ds-20261111-2`（3 个场景 6 条）· 事故流：datasets/streams/es.yaml

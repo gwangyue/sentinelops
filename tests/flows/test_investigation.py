@@ -1,13 +1,15 @@
 """02 §1–2 的流程测试：调查图的只读路径。回放真实录制 + 假模型 + 内存存储。"""
 
+import dataclasses
 import itertools
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
-from sentinel.contracts import KNOWN_EVENT_TYPES, Diagnosis
-from sentinel.core.diagnosis.evidence import check_evidence, support_rate
+from sentinel.contracts import KNOWN_EVENT_TYPES, Claim, Diagnosis
+from sentinel.core.diagnosis.evidence import check_claim, check_evidence, support_rate
 from sentinel.core.store import GENESIS_HASH, event_hash
 from sentinel.core.versioning.components import load_context_policy
 from sentinel.core.versioning.freeze import FreezeError
@@ -63,6 +65,21 @@ def test_fabricated_quote_is_caught(harness: H) -> None:
     s = h.run()
     [c] = check_evidence(Diagnosis.model_validate(s["diagnosis"]), h.obs.list(s["inv_id"]))
     assert not c.supported and "quote" in c.reason
+
+
+def test_quote_with_wrapper_status_prefix(harness: H) -> None:
+    # 模型看到的工具返回是 "[ok] 摘要"，照提示词逐字复制会带上前缀（教程 03 §3.8，v36 实测 21 条）
+    h = harness("disk_watermark", diagnose_script())
+    s = h.run()
+    o = next(o for o in h.obs.list(s["inv_id"]) if o.tool == "es.allocation_explain")
+    first = o.digest.splitlines()[0]
+
+    def check(quote: str) -> bool:
+        return check_claim(Claim(id="c", text="-", evidence=[o.id], quote=quote), {o.id: o}, s["inv_id"])[0]
+
+    assert check(f"[ok] {first}")  # 和观测的真实状态一致的前缀：去掉后比对
+    assert not check(f"[error] {first}")  # 状态对不上：不去掉
+    assert not check("[ok] the node is on fire")  # 去掉前缀后仍然是编造的
 
 
 def test_unknown_label_becomes_none(harness: H) -> None:
@@ -121,3 +138,22 @@ def test_same_fingerprint_within_30_minutes_is_deduplicated(harness: H) -> None:
     assert h.model.calls == calls
     types = h.audit_types(second["inv_id"])
     assert types.count("finding.deduplicated") == 2 and "diagnosis.completed" not in types
+
+
+def test_dedup_window_does_not_slide_on_deduplicated_runs(harness: H) -> None:
+    # 每 15 分钟巡检一次、问题一直在：第 1 次诊断；第 2 次（25 分钟后）重复；
+    # 第 3 次时第 1 次已出窗口（40 分钟前），第 2 次只是一次"判为重复"的调查，不能把窗口往后推 → 应重新诊断。
+    # 修之前被判重复的调查也算数，持续存在的问题只诊断一次（教程 03 §3.3 实验 E）。
+    h = harness("disk_watermark", diagnose_script())
+
+    def age(minutes_ago: dict[str, int]) -> None:
+        now = datetime.now(UTC)
+        for inv, m in minutes_ago.items():
+            h.store.invs[inv] = dataclasses.replace(h.store.invs[inv], created_at=now - timedelta(minutes=m))
+
+    first = h.run()
+    age({first["inv_id"]: 25})
+    second = h.run()
+    age({first["inv_id"]: 40, second["inv_id"]: 15})
+    third = h.run()
+    assert [first["status"], second["status"], third["status"]] == ["diagnosed", "deduplicated", "diagnosed"]

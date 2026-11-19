@@ -43,7 +43,7 @@ from sentinel.core.graph.remediate import (
     execution_keys,
     parse_proposal,
     plan_prompt_message,
-    request_approval,
+    request_approval_if_free,
     run_verify,
     validate_proposal,
     wait_approval,
@@ -81,7 +81,8 @@ class InvState(TypedDict, total=False):
     approval_id: str | None
     execution: dict[str, Any] | None  # ExecutionResult
     unsafe_proposals: int
-    remediation: str | None  # 修复段的结局：resolved / no_action / unsafe / plan_failed / rejected / expired / ...
+    # 修复段的结局：resolved / no_action / unsafe / plan_failed / target_busy / rejected / expired / ...
+    remediation: str | None
     memory_id: str | None  # 确认之后写入的记忆（M3 D12）
 
 
@@ -105,7 +106,7 @@ class Deps:
 
     def backend(self, pack: LoadedPack, inv_id: str) -> ToolBackend:
         # detect 和 diagnose 用同一个后端：同一次调查里同一个调用只执行一次，回放的顺序也保持一致
-        key = f"{inv_id}/{pack.manifest.pack}"
+        key = f"{inv_id}/{pack.manifest.pack}"  # eg inv_01M74E2QD8GN52NJHBDXX1JMYR/es
         if key not in self._backends:
             self._backends[key] = self.make_backend(pack, inv_id)
         return self._backends[key]
@@ -117,8 +118,8 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
             investigation_id=state["inv_id"],
             agent_version=state.get("agent_version"),
             actor=ACTOR,
-            type=type_,
-            payload=payload,
+            type=type_,  # 审计事件类型
+            payload=payload,  # 审计事件负载
         )
 
     def intake(state: InvState) -> InvState:
@@ -149,9 +150,10 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
         findings = [f.model_dump(mode="json") for f in res.findings]
         sheets = [s.model_dump(mode="json") for s in res.fact_sheets]
         deps.store.update_investigation(state["inv_id"], findings=findings, fact_sheets=sheets)
+
         changes = _changes(deps, pack, state["target"], deps.backend(pack, state["inv_id"]))
         seen = deps.store.recent_fingerprints(state["target"], datetime.now(UTC) - DEDUP_WINDOW, state["inv_id"])
-        fresh = [f for f in res.findings if f.fingerprint not in seen]
+        fresh = [f for f in res.findings if f.fingerprint not in seen]  # 新鲜问题事件
         for f in res.findings:
             if f.fingerprint in seen:
                 audit(state, "finding.deduplicated", {"finding": f.id, "fingerprint": f.fingerprint})
@@ -302,7 +304,13 @@ def build_graph(deps: Deps, checkpointer: BaseCheckpointSaver[Any] | None = None
                 "remediation": "plan_failed",
                 "escalate_reason": f"plan: {reason}",
             }
-        req = request_approval(deps.remediation.store, built, deps.remediation.approval_ttl)
+        req, busy = request_approval_if_free(deps.remediation.store, built, deps.remediation.approval_ttl)
+        if req is None:
+            # 同一个集群上已有活动方案（审批中，或已批准还没验证完）：不发起第二个审批，只出报告。
+            # 和冻结一样不升级：已经有人在处理这个集群，报告里写明被哪份方案挡住（教程 00 §13.5 第 3 号）
+            rejected = {"action": p.action_id, "params": p.params, "rejected": f"target_busy: {busy}"}
+            audit(state, "plan.proposed", rejected)
+            return {"model_calls": calls, "proposal": p.model_dump(mode="json"), "remediation": "target_busy"}
         audit(
             state,
             "plan.proposed",
@@ -474,6 +482,7 @@ def _escalation_reason(escalate: bool, why: str | None, confidences: list[float]
         return f"model: {why or '模型认为证据不足'}"
     if not confidences:
         return "no_hypothesis: 没有给出任何假设"
+    # 如果 H1 置信度低于阈值，则升级给人
     if confidences[0] < policy["escalation"]["min_confidence"]:
         return f"low_confidence: H1 置信度 {confidences[0]:.2f} 低于 {policy['escalation']['min_confidence']}"
     return None

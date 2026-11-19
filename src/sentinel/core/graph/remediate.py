@@ -132,14 +132,35 @@ def build_plan(
     return plan, "ok"
 
 
-def request_approval(store: RemediationStore, plan: RemediationPlan, ttl: timedelta) -> ApprovalRequest:
-    now = datetime.now(UTC)
-    req = ApprovalRequest(
+def _new_request(plan: RemediationPlan, ttl: timedelta, now: datetime) -> ApprovalRequest:
+    # 审批 ID 由代码生成（CLAUDE.md 安全规则）
+    return ApprovalRequest(
         id=f"apv_{ULID()}", plan_id=plan.id, plan_hash=plan.plan_hash, requested_at=now, expires_at=now + ttl
     )
+
+
+def request_approval(store: RemediationStore, plan: RemediationPlan, ttl: timedelta) -> ApprovalRequest:
+    """不检查互斥，直接写入。只给故障台用：它每次用一个新的内存存储，录完就丢。调查图用 request_approval_if_free。"""
+    req = _new_request(plan, ttl, datetime.now(UTC))
     store.put_plan(plan)
     store.put_approval_request(req)
     return req
+
+
+def request_approval_if_free(
+    store: RemediationStore, plan: RemediationPlan, ttl: timedelta
+) -> tuple[ApprovalRequest | None, str | None]:
+    """同一个集群没有活动方案时才写入方案和审批请求（教程 00 §13.5 第 3 号）。
+
+    返回 (审批请求, None)；集群被占用时返回 (None, 挡住它的方案 ID)，方案和审批请求都不写。
+    为什么要互斥：两个调查可以各自提出、各自被批准、先后执行；单看都合法的两个动作，合在一起可能有害，
+    执行器执行前重做前置检查只能挡住"前提已经变了"的那一部分。
+    TODO(edge)：执行器侧不再检查一次（ADR-005 的"执行器不信任调查引擎"在这里没有落实）。
+    """
+    now = datetime.now(UTC)
+    req = _new_request(plan, ttl, now)
+    busy = store.request_approval_exclusive(plan, req, now)
+    return (None, busy) if busy is not None else (req, None)
 
 
 def wait_approval(approval_id: str) -> Any:

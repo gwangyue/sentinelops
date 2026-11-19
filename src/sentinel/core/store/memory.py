@@ -33,10 +33,11 @@ class MemoryStore:
         return sorted(self.invs.values(), key=lambda r: r.created_at, reverse=True)[:limit]
 
     def recent_fingerprints(self, target: str, since: datetime, exclude: str) -> set[str]:
+        # 被判为重复的调查不算：它们也存了问题事件，算进来窗口就会一路往后滑（见 base.py）
         return {
             f["fingerprint"]
             for r in self.invs.values()
-            if r.target == target and r.created_at >= since and r.id != exclude
+            if r.target == target and r.created_at >= since and r.id != exclude and r.status != "deduplicated"
             for f in r.findings
         }
 

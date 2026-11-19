@@ -3,13 +3,17 @@
 负责：plans / approval_requests / approval_decisions / execution_requests / executions 五张表的读写（DDL 在
       core/store/sql/003_remediation.sql），以及执行器写审计（和调查引擎同一条哈希链）。
 不负责：哪些检查通过才能写（plan 节点、执行器）。
+两道护栏也在这里，因为它们都要和写入放在同一个事务里才成立（教程 00 §13.5 第 3、4 号缺陷）：
+- request_approval_exclusive：同一个集群同一时间只能有一份活动方案（审批中，或已批准但还没验证完）；
+- withdraw_execution_request：等执行器超时后，撤回还没被认领的执行请求。
 放在 governance：执行器不能依赖 core（ADR-005），而 plan 节点和执行器必须读写同一份记录。
 Memory 实现给测试和回放评测用：评测不写 Postgres（06 §9）。
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, Protocol
 
 import psycopg
@@ -36,6 +40,42 @@ class DuplicateError(RuntimeError):
     """唯一约束挡住的写入：同一个审批的第二个决定、同一个幂等键的第二个结果。"""
 
 
+# 一份方案"结束"的信号（都来自审计）：验证完成、审批过期、调查结束。被拒绝的方案会走到 investigation.closed。
+VERIFY_DONE = ("verify.passed", "verify.failed")
+
+
+def active_plan_id(
+    target: str,
+    plans: Sequence[RemediationPlan],
+    requests: Sequence[ApprovalRequest],
+    decisions: dict[str, ApprovalDecision],
+    events: Sequence[AuditEvent],
+    now: datetime,
+) -> str | None:
+    """同一集群上的活动方案（内存实现用；Postgres 用等价的 SQL，见 PgRemediationStore._ACTIVE_SQL）。
+
+    活动 = 调查还没结束，并且满足其一：
+      - 审批请求还没有决定，也没过期（人随时可能批准）；
+      - 已批准，但还没有 verify.passed / verify.failed，也没有 approval.expired（正在执行或验证）。
+    验证完成就释放：之后等人确认根因可能要几个小时，不能一直挡住这个集群的新方案。
+    TODO(edge)：调查进程崩溃、永远不会结束时锁不会自动释放；验证失败后到回滚完成之间的几秒钟不算活动。
+    """
+    by_id = {p.id: p for p in plans}
+    closed = {e.investigation_id for e in events if e.type == "investigation.closed"}
+    verified = {e.payload.get("plan_id") for e in events if e.type in VERIFY_DONE}
+    expired = {e.payload.get("approval_id") for e in events if e.type == "approval.expired"}
+    for req in sorted(requests, key=lambda r: r.requested_at):
+        p = by_id.get(req.plan_id)
+        if p is None or p.target != target or p.investigation_id in closed:
+            continue
+        d = decisions.get(req.id)
+        if d is None and req.expires_at > now:
+            return p.id
+        if d is not None and d.decision == "approved" and p.id not in verified and req.id not in expired:
+            return p.id
+    return None
+
+
 class RemediationStore(Protocol):
     def put_plan(self, plan: RemediationPlan) -> None: ...
     def get_plan(self, plan_id: str) -> RemediationPlan | None: ...
@@ -44,8 +84,17 @@ class RemediationStore(Protocol):
     def list_approval_requests(self) -> list[ApprovalRequest]: ...
     def put_decision(self, d: ApprovalDecision) -> None: ...
     def get_decision(self, approval_id: str) -> ApprovalDecision | None: ...
+    def request_approval_exclusive(self, plan: RemediationPlan, req: ApprovalRequest, now: datetime) -> str | None:
+        """同一个集群没有活动方案时，写入方案和审批请求，返回 None；否则什么都不写，返回挡住它的方案 ID。
+        检查和写入在同一个事务里，两个调查同时进来也只有一个能通过。"""
+        ...
+
     def request_execution(self, kind: ExecKind, plan_id: str, approval_id: str, idempotency_key: str) -> None: ...
     def claim_execution_request(self) -> ExecRequest | None: ...
+    def withdraw_execution_request(self, idempotency_key: str, kind: ExecKind) -> bool:
+        """撤回还没被执行器认领的请求；已经被认领（可能正在执行）就撤不回，返回 False。"""
+        ...
+
     def put_execution(self, r: ExecutionResult) -> None: ...
     def get_execution(self, idempotency_key: str) -> ExecutionResult | None: ...
     def append_audit(
@@ -54,9 +103,15 @@ class RemediationStore(Protocol):
 
 
 class MemoryRemediationStore:
-    def __init__(self, audit_sink: Callable[..., AuditEvent] | None = None) -> None:
+    def __init__(
+        self,
+        audit_sink: Callable[..., AuditEvent] | None = None,
+        audit_reader: Callable[[], list[AuditEvent]] | None = None,
+    ) -> None:
         # audit_sink：调查存储的 append_audit。给了它，执行器的审计就和调查写在同一条链上（和 Postgres 一样）
+        # audit_reader：读同一条审计链。互斥要看调查写的 verify.* / investigation.closed，它们不经过这里
         self.audit_sink = audit_sink
+        self.audit_reader = audit_reader
         self.plans: dict[str, RemediationPlan] = {}
         self.requests: dict[str, ApprovalRequest] = {}
         self.decisions: dict[str, ApprovalDecision] = {}
@@ -87,11 +142,31 @@ class MemoryRemediationStore:
     def get_decision(self, approval_id: str) -> ApprovalDecision | None:
         return self.decisions.get(approval_id)
 
+    def request_approval_exclusive(self, plan: RemediationPlan, req: ApprovalRequest, now: datetime) -> str | None:
+        # 单线程使用（测试、回放评测），不需要锁
+        events = self.audit_reader() if self.audit_reader else self.audit
+        busy = active_plan_id(
+            plan.target, list(self.plans.values()), list(self.requests.values()), self.decisions, events, now
+        )
+        if busy is not None:
+            return busy
+        self.put_plan(plan)
+        self.put_approval_request(req)
+        return None
+
     def request_execution(self, kind: ExecKind, plan_id: str, approval_id: str, idempotency_key: str) -> None:
         self.queue.append(ExecRequest(len(self.queue) + 1, kind, plan_id, approval_id, idempotency_key))
 
     def claim_execution_request(self) -> ExecRequest | None:
         return self.queue.pop(0) if self.queue else None
+
+    def withdraw_execution_request(self, idempotency_key: str, kind: ExecKind) -> bool:
+        # 认领 = 从队列里取走，所以还在队列里的就是没被认领的
+        for i, r in enumerate(self.queue):
+            if r.idempotency_key == idempotency_key and r.kind == kind:
+                del self.queue[i]
+                return True
+        return False
 
     def put_execution(self, r: ExecutionResult) -> None:
         if r.idempotency_key in self.executions:
@@ -123,6 +198,24 @@ class MemoryRemediationStore:
 
 
 class PgRemediationStore:
+    # 和 active_plan_id 同样的口径。TODO(edge)：plans 没有按 target 的索引，方案多了以后要加
+    _ACTIVE_SQL = (
+        "SELECT p.id FROM plans p"
+        " JOIN approval_requests r ON r.plan_id = p.id"
+        " LEFT JOIN approval_decisions d ON d.approval_id = r.id"
+        " WHERE p.body->>'target' = %(target)s"
+        "   AND NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.investigation_id = p.investigation_id"
+        "                   AND a.type = 'investigation.closed')"
+        "   AND ((d.approval_id IS NULL AND r.expires_at > %(now)s)"
+        "        OR (d.body->>'decision' = 'approved'"
+        "            AND NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.investigation_id = p.investigation_id"
+        "                            AND a.type IN ('verify.passed', 'verify.failed')"
+        "                            AND a.payload->>'plan_id' = p.id)"
+        "            AND NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.investigation_id = p.investigation_id"
+        "                            AND a.type = 'approval.expired' AND a.payload->>'approval_id' = r.id)))"
+        " ORDER BY r.requested_at LIMIT 1"
+    )
+
     def __init__(self, url: str) -> None:
         self.url = url
 
@@ -174,6 +267,25 @@ class PgRemediationStore:
             r = c.execute("SELECT body FROM approval_decisions WHERE approval_id = %s", (approval_id,)).fetchone()
         return ApprovalDecision.model_validate(r["body"]) if r else None
 
+    def request_approval_exclusive(self, plan: RemediationPlan, req: ApprovalRequest, now: datetime) -> str | None:
+        with self._conn() as c:
+            # 按集群加事务级的锁：两个调查同时进来，后到的会等前一个事务提交，再看到它写入的方案。
+            # 只用"先查后写"不加锁的话，两边可能都查到"没有活动方案"然后都写入。hashtext 碰撞只会让不同集群多排一次队
+            c.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (plan.target,))
+            busy = c.execute(self._ACTIVE_SQL, {"target": plan.target, "now": now}).fetchone()
+            if busy is not None:
+                return str(busy["id"])
+            c.execute(
+                "INSERT INTO plans (id, investigation_id, plan_hash, body) VALUES (%s, %s, %s, %s)",
+                (plan.id, plan.investigation_id, plan.plan_hash, plan.model_dump_json()),
+            )
+            c.execute(
+                "INSERT INTO approval_requests (id, plan_id, plan_hash, requested_at, expires_at) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (req.id, req.plan_id, req.plan_hash, req.requested_at, req.expires_at),
+            )
+        return None
+
     def request_execution(self, kind: ExecKind, plan_id: str, approval_id: str, idempotency_key: str) -> None:
         with self._conn() as c:
             c.execute(
@@ -191,6 +303,17 @@ class PgRemediationStore:
                 ") RETURNING id, kind, plan_id, approval_id, idempotency_key"
             ).fetchone()
         return ExecRequest(**r) if r else None
+
+    def withdraw_execution_request(self, idempotency_key: str, kind: ExecKind) -> bool:
+        # 和认领互斥：认领先锁住这一行，这里会等它提交，再按 claimed_at 重新判断，删不掉；
+        # 这里先删，认领的 SKIP LOCKED 会跳过这一行，提交之后它就不存在了
+        with self._conn() as c:
+            r = c.execute(
+                "DELETE FROM execution_requests WHERE idempotency_key = %s AND kind = %s AND claimed_at IS NULL"
+                " RETURNING id",
+                (idempotency_key, kind),
+            ).fetchone()
+        return r is not None
 
     def put_execution(self, r: ExecutionResult) -> None:
         try:

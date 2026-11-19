@@ -43,8 +43,17 @@ class StoreMemoryProvider:
         out = []
         for s in hits:
             r = s.memory.record
+            # 易混淆的根因标签，由ID，替换为文本标签，便于推理。
+            # 已失效的不算：失效 = 不再参与检索（05 §3.7），也包括不再以"易混淆"提示进入 L5
+            # （否则因伤害失效的记忆，它的根因仍会通过配对记忆影响诊断，教程 01 §3.8 实测）
             labels = tuple(
-                sorted({m.record.root_cause_label for i in r.confused_with if (m := self.store.get(i)) is not None})
+                sorted(
+                    {
+                        m.record.root_cause_label
+                        for i in r.confused_with
+                        if (m := self.store.get(i)) is not None and not m.record.invalidated
+                    }
+                )
             )
             out.append(
                 MemoryHit(

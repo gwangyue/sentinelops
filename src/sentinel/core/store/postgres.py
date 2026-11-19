@@ -64,7 +64,8 @@ class PgStore:
         with self._conn() as c:
             rows = c.execute(
                 "SELECT f->>'fingerprint' AS fp FROM investigations, jsonb_array_elements(findings) AS f "
-                "WHERE target = %s AND created_at >= %s AND id <> %s",
+                # 被判为重复的调查不算（见 base.py 的 recent_fingerprints）
+                "WHERE target = %s AND created_at >= %s AND id <> %s AND status <> 'deduplicated'",
                 (target, since, exclude),
             ).fetchall()
         return {r["fp"] for r in rows}

@@ -1,10 +1,15 @@
 """记忆服务（05 篇）：指纹、召回和精排、写入与合并、易混淆、反馈与失效、快照。离线（本地存储 + 假向量）。"""
 
 import hashlib
-from collections.abc import Sequence
+import json
+from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import httpx
+import pytest
 
 from sentinel.contracts import Fact, FactSheet, Finding
 from sentinel.core.context.changes import Change
@@ -13,7 +18,7 @@ from sentinel.core.memory.fingerprint import build, weighted_jaccard
 from sentinel.core.memory.policy import load_memory_policy
 from sentinel.core.memory.provider import StoreMemoryProvider
 from sentinel.core.memory.snapshot import export, load
-from sentinel.core.memory.store import LocalMemoryStore
+from sentinel.core.memory.store import TIE_SORT, EsMemoryStore, LocalMemoryStore, MemoryConflict, StoredMemory
 from sentinel.core.memory.write import write_confirmed
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
@@ -192,6 +197,18 @@ def test_confused_label_is_shown() -> None:
     assert all(h.confused_labels for h in hits)
 
 
+def test_invalidated_memory_is_not_shown_as_confused() -> None:
+    # 失效 = 不再参与检索（05 §3.7）：配对记忆的易混淆提示里也不能再出现它的根因
+    store, ev = LocalMemoryStore(), []
+    a = _write(store, disk_fp(), "es.disk_high_watermark", ev)
+    b = _write(store, disk_fp(), "es.allocation_disabled", ev)
+    store.items[b.id].record = b.model_copy(update={"invalidated": True})
+    hits = StoreMemoryProvider(store, NS, POLICY, fake_embed).similar(
+        [finding("es.unassigned_shards"), finding("es.disk_watermark", "n9")], [sheet("n9", 93.0)], [], 3
+    )
+    assert [(h.memory_id, h.confused_labels) for h in hits] == [(a.id, ())]
+
+
 # ---------- 反馈与失效 ----------
 
 
@@ -244,3 +261,72 @@ def test_snapshot_roundtrip(tmp_path: Path) -> None:
     assert export(store, NS, tmp_path / "m.jsonl") == 1
     other = LocalMemoryStore()
     assert load(other, tmp_path / "m.jsonl") == 1 and list(other.items) == list(store.items)
+
+
+# ---------- 并发：乐观锁和同分排序（教程 01 §3.5、§3.7） ----------
+
+
+def test_local_store_returns_copies_and_rejects_stale_write() -> None:
+    store, ev = LocalMemoryStore(), []
+    r = _write(store, disk_fp(), "es.disk_high_watermark", ev)
+    a, b = store.get(r.id), store.get(r.id)
+    assert a is not None and b is not None and a is not store.items[r.id]
+    store.put(replace(a, record=a.record.model_copy(update={"hit_count": 1})))
+    with pytest.raises(MemoryConflict):  # b 是在 a 写回之前读的
+        store.put(replace(b, record=b.record.model_copy(update={"hit_count": 1})))
+
+
+class _Interleaved(LocalMemoryStore):
+    """第一次 get 之后、写回之前，插进另一次完整的反馈：复现两次调查同时确认的最坏交错。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.inject: Callable[[], None] | None = None
+
+    def get(self, memory_id: str) -> StoredMemory | None:
+        m = super().get(memory_id)
+        if self.inject is not None:
+            f, self.inject = self.inject, None
+            f()
+        return m
+
+
+def test_concurrent_feedback_does_not_lose_update() -> None:
+    store, ev = _Interleaved(), []
+    r = _write(store, disk_fp(), "es.disk_high_watermark", ev)
+
+    def fb() -> None:
+        feedback.update(
+            store,
+            shown=[r.id],
+            confirmed_label="es.disk_high_watermark",
+            harmed=[],
+            policy=POLICY,
+            audit=lambda t, p: None,
+        )
+
+    store.inject = fb
+    fb()
+    m = store.items[r.id].record
+    assert (m.hit_count, m.helpful_count) == (2, 2)  # 修复前是 (1, 1)
+
+
+def test_es_store_sends_tie_sort_and_version() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        if req.method == "PUT":
+            return httpx.Response(409, json={})
+        return httpx.Response(200, json={"hits": {"hits": []}})
+
+    es = EsMemoryStore("mem-test")
+    es._c = httpx.Client(base_url="http://es", transport=httpx.MockTransport(handler))
+    es.search_terms(["det:x"], NS, 5)
+    assert json.loads(seen[0].content)["sort"] == TIE_SORT  # 同分按记忆 ID，和 LocalMemoryStore 一致
+    store, ev = LocalMemoryStore(), []
+    m = store.get(_write(store, disk_fp(), "es.disk_high_watermark", ev).id)
+    assert m is not None and m.seq is not None
+    with pytest.raises(MemoryConflict):
+        es.put(m)
+    assert seen[1].url.params["if_seq_no"] == str(m.seq[0])

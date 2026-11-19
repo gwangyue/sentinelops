@@ -71,8 +71,8 @@ def make_deps(
     remediation: Remediation | None = None,
 ) -> Deps:
     """组装 Deps 的唯一位置。M2 加上下文层和记忆服务时只改这里，线上和评测一起生效。"""
-    packs = load_packs()
-    policy = load_context_policy()
+    packs = load_packs()  # 专家包
+    policy = load_context_policy()  # 上下文策略
 
     def make_backend(pack: LoadedPack, inv_id: str) -> ToolBackend:
         return open_backend(pack, inv_id, mode, obs_store, fixture)
@@ -155,13 +155,25 @@ def queue_executor(
             if (r := store.get_execution(key)) is not None:
                 return r
             time.sleep(1)
-        # TODO(edge)：超时之后执行器可能还会执行；现在升级给人，由人去看执行器日志
+        # 超时：请求如果还留在队列里，执行器之后仍可能执行，而人看到的是"失败"（教程 00 §13.5 第 4 号）。
+        # 所以先撤回没被认领的请求：撤回成功就保证不会执行；撤不回说明执行器已经认领，结果未知，如实告诉人
+        if (r := store.get_execution(key)) is not None:
+            return r  # 最后一次轮询之后刚好写回了结果
+        withdrawn = store.withdraw_execution_request(key, kind)
+        if not withdrawn and (r := store.get_execution(key)) is not None:
+            return r  # 撤回的那一刻执行器刚好执行完
+        # TODO(edge)：撤回本身没有单独的审计事件（03 §5.1 的事件表里没有这个类型）；结果写在升级原因里
+        error = (
+            f"{wait_s:.0f} 秒内执行器没有认领，请求已撤回，没有执行（执行器进程在运行吗？）"
+            if withdrawn
+            else f"执行器已认领但 {wait_s:.0f} 秒内没有结果，可能仍在执行，请看执行器日志和 executions 表"
+        )
         return ExecutionResult(
             plan_id=plan_id,
             approval_id=approval_id,
             idempotency_key=key,
             status="failed",
-            output={"error": f"{wait_s:.0f} 秒内执行器没有返回结果（执行器进程在运行吗？）"},
+            output={"error": error},
             verify_passed=None,
         )
 

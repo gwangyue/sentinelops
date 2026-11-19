@@ -61,7 +61,10 @@ class Harness:
             return ToolBackend(pack.tools, self.obs, inv, Mode.REPLAY, fixture=fx)
 
         # 修复段：内存里的修复存储 + 回放执行器（和评测同一套组装，eval/replay_exec.py）
-        self.rem_store = MemoryRemediationStore(audit_sink=self.store.append_audit)  # 和线上一样，同一条审计链
+        # 和线上一样，同一条审计链；读也读这条链（同一集群的修复互斥要看调查写的 verify.* 和 investigation.closed）
+        self.rem_store = MemoryRemediationStore(
+            audit_sink=self.store.append_audit, audit_reader=lambda: self.store.audit_events()
+        )
         self.freeze_state = MemoryFreezeState()  # 紧急停止（07 §7）
         self.saver = InMemorySaver()  # run 和 resume 共用：interrupt 之后要能找回同一个线程的状态
 
