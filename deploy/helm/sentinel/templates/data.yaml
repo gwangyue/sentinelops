@@ -1,0 +1,110 @@
+{{/* sentinel-data：es-memory（记忆和知识库，ADR-004）和 Postgres（checkpoint、审批、审计、版本，01 §2 第⑤层） */}}
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: es-memory
+  namespace: sentinel-data
+spec:
+  version: {{ .Values.esVersion }}
+  # 只关 HTTP 层的 TLS，认证照常开着：记忆客户端（core/memory/store.py）没有 CA 配置，
+  # 账号密码写在 SENTINEL_ESM_URL 的 userinfo 里，httpx 会转成 Basic 认证（D15 实测），core 不用改
+  # TODO(edge): 集群内明文 HTTP；要加密就得给记忆客户端加 CA 配置（改 core）
+  http:
+    tls:
+      selfSignedCertificate: { disabled: true }
+  auth:
+    roles:
+      - secretName: sentinel-memory-role
+    fileRealm:
+      - secretName: sentinel-mem-user
+  nodeSets:
+    - name: default
+      count: 1
+      config:
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: "-Xms{{ .Values.esMemory.heap }} -Xmx{{ .Values.esMemory.heap }}"
+              resources:
+                requests: { memory: {{ .Values.esMemory.memory }}, cpu: 250m }
+                limits: { memory: {{ .Values.esMemory.memory }} }
+      volumeClaimTemplates:
+        - metadata: { name: elasticsearch-data }
+          spec:
+            accessModes: [ReadWriteOnce]
+            {{- include "sentinel.storageClass" .Values.storage.defaultClass | indent 12 }}
+            resources: { requests: { storage: {{ .Values.esMemory.disk }} } }
+---
+# es-memory 是 Agent 自己的存储（记忆 incidents-*、知识库），索引都由 Agent 建，所以给这个集群上的全部索引权限
+apiVersion: v1
+kind: Secret
+metadata: { name: sentinel-memory-role, namespace: sentinel-data }
+stringData:
+  roles.yml: |-
+    sentinel_memory:
+      cluster: [monitor]
+      indices:
+        - names: ["*"]
+          privileges: [all]
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: sentinel-mem-user, namespace: sentinel-data }
+type: kubernetes.io/basic-auth
+stringData:
+  username: sentinel-mem
+  password: {{ include "sentinel.pw" (list $ "mem") | quote }}
+  roles: sentinel_memory
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: postgres-auth, namespace: sentinel-data }
+stringData:
+  password: {{ include "sentinel.pw" (list $ "pg") | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres, namespace: sentinel-data }
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: postgres, namespace: sentinel-data }
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: POSTGRES_DB
+              value: sentinel
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-auth, key: password } }
+            # EBS 卷的根目录有 lost+found，initdb 要求空目录，所以用子目录
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports: [{ containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: [pg_isready, -U, postgres] }
+            periodSeconds: 5
+          resources:
+            requests: { memory: 256Mi, cpu: 100m }
+            limits: { memory: 512Mi }
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- include "sentinel.storageClass" .Values.storage.defaultClass | indent 8 }}
+        resources: { requests: { storage: {{ .Values.postgres.disk }} } }

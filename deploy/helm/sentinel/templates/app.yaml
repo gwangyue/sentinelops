@@ -1,0 +1,90 @@
+{{/*
+agent-api（sentinel-system）和执行器（sentinel-exec）：同一个镜像，启动命令不同。
+凭证按 ADR-005 分开：agent 只拿只读账号，执行器只拿写账号；两边各自命名空间里一份 Secret，互相读不到。
+环境变量名和本地 dev-env.sh / exec-env.sh 一致（core/credentials.py、exec/ 的约定）。
+*/}}
+{{- $pg := include "sentinel.pw" (list $ "pg") -}}
+{{- $pgUrl := printf "postgresql://postgres:%s@postgres.sentinel-data.svc:5432/sentinel" $pg -}}
+apiVersion: v1
+kind: Secret
+metadata: { name: sentinel-agent-env, namespace: sentinel-system }
+stringData:
+  SENTINEL_PG_URL: {{ $pgUrl | quote }}
+  SENTINEL_ESM_URL: {{ printf "http://sentinel-mem:%s@es-memory-es-http.sentinel-data.svc:9200" (include "sentinel.pw" (list $ "mem")) | quote }}
+  SENTINEL_CRED_ES_READONLY_URL: {{ printf "https://%s:9200" .Values.esTarget.agentHost | quote }}
+  SENTINEL_CRED_ES_READONLY_USER: sentinel-ro
+  SENTINEL_CRED_ES_READONLY_PASSWORD: {{ include "sentinel.pw" (list $ "ro") | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: agent-api, namespace: sentinel-system }
+spec:
+  replicas: {{ .Values.agent.replicas }}
+  selector: { matchLabels: { app: agent-api } }
+  template:
+    metadata:
+      labels: { app: agent-api }
+      # Secret 内容变了（例如重新生成密码）就滚动重启，否则 Pod 里还是旧的环境变量
+      annotations: { checksum/env: {{ $pgUrl | sha256sum | trunc 12 | quote }} }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      containers:
+        - name: agent-api
+          image: {{ include "sentinel.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [uvicorn, sentinel.api.app:app, --host, 0.0.0.0, --port, "8000"]
+          envFrom:
+            - secretRef: { name: sentinel-agent-env }
+            - secretRef: { name: {{ .Values.agent.llmSecret }} }
+          ports: [{ containerPort: 8000 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 10
+          resources:
+            requests: { memory: 512Mi, cpu: 250m }
+            limits: { memory: {{ .Values.agent.memory }} }
+          # 观测记录、审计锚点写在 /app/var（相对路径 var/）；Pod 重建就丢。
+          # TODO(edge): 观测原文要长期保留得挂 PVC 或放 S3（01 §5.2 的 S3 端点）
+          volumeMounts: [{ name: var, mountPath: /app/var }]
+      volumes: [{ name: var, emptyDir: {} }]
+---
+# 不暴露公网入口（01 §5.2）：操作员用 kubectl port-forward 或 kubectl exec
+apiVersion: v1
+kind: Service
+metadata: { name: agent-api, namespace: sentinel-system }
+spec:
+  selector: { app: agent-api }
+  ports: [{ port: 8000 }]
+{{- if .Values.executor.enabled }}
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: sentinel-exec-env, namespace: sentinel-exec }
+stringData:
+  SENTINEL_PG_URL: {{ $pgUrl | quote }}
+  SENTINEL_CRED_ES_EXECUTOR_URL: {{ printf "https://%s:9200" .Values.esTarget.agentHost | quote }}
+  SENTINEL_CRED_ES_EXECUTOR_USER: sentinel-exec
+  SENTINEL_CRED_ES_EXECUTOR_PASSWORD: {{ include "sentinel.pw" (list $ "exec") | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: executor, namespace: sentinel-exec }
+spec:
+  replicas: 1   # 单实例：认领用行锁，多实例也安全，但没必要
+  selector: { matchLabels: { app: executor } }
+  template:
+    metadata:
+      labels: { app: executor }
+      annotations: { checksum/env: {{ $pgUrl | sha256sum | trunc 12 | quote }} }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      containers:
+        - name: executor
+          image: {{ include "sentinel.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [python, -m, sentinel.exec]
+          envFrom: [{ secretRef: { name: sentinel-exec-env } }]
+          resources:
+            requests: { memory: 256Mi, cpu: 100m }
+            limits: { memory: {{ .Values.executor.memory }} }
+{{- end }}

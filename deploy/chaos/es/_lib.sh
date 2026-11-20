@@ -1,6 +1,6 @@
 # 故障脚本的公共部分：管理员连接（只用于故障台，不是 Agent 的操作）。
 # port-forward 固定连 data-0：故障都打在 data-2 上，连 Service 可能正好连到被注入故障的 Pod（D2 发现）。
-CTX=kind-sentinel
+CTX=${CTX:-kind-sentinel}   # EKS 上用 CTX=sentinel-aws（deploy/aws/aws-patrol.sh）
 NS=targets
 VICTIM=${VICTIM:-es-target-es-data-2}
 kc() { kubectl --context "$CTX" "$@"; }

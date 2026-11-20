@@ -4,7 +4,7 @@
 # 没有业务索引时，节点宕机只会表现为"节点数减少"，和真实集群不符（M1 D2 录制时发现；S2 也建了同样的索引）。
 # 用管理员账号写入（这是环境准备，不是 Agent 的操作）。文档数够了就跳过；文档用固定 _id，重复写入不会变多。
 set -euo pipefail
-CTX=kind-sentinel; PORT=${SEED_PORT:-$((20000 + RANDOM % 1000))}
+CTX=${CTX:-kind-sentinel}; PORT=${SEED_PORT:-$((20000 + RANDOM % 1000))}
 kc() { kubectl --context "$CTX" "$@"; }
 kc -n targets port-forward svc/es-target-es-http "$PORT:9200" >/dev/null 2>&1 &
 PF=$!; trap 'kill $PF 2>/dev/null || true' EXIT  # set -e 下 kill 失败会让脚本退出码变成 1

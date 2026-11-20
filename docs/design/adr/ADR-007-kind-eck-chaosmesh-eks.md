@@ -10,7 +10,9 @@
 ## 决策
 
 - 本地：kind 集群，ES 用 ECK（Elastic 官方的 K8s operator）部署，故障注入用 Chaos Mesh 加脚本。
-- 云上：AWS EKS，东京区域（ap-northeast-1），用 Terraform 创建，和本地用同一套 Helm chart，只换 values 文件。
+- 云上：AWS EKS，~~东京区域（ap-northeast-1）~~ **悉尼区域（ap-southeast-2）**，用 Terraform 创建，和本地用同一套 Helm chart，只换 values 文件。
+
+**修订（2026-11-20）**：部署账号属于一个 AWS Organization，它的 SCP 只放开了 ap-southeast-2，东京的 EC2/EKS/ECR/S3 全部显式拒绝（SCP 优先于 IAM，加权限绕不过去）。架构不变，只换区域；价格差不多（spike-results S6）。同一条 SCP 还拒绝 `iam:CreateOpenIDConnectProvider`，所以 Pod 的 AWS 权限用 EKS Pod Identity，不用 IRSA。
 - 只在演示时创建云上集群，用完就销毁。
 
 ## 放弃的方案

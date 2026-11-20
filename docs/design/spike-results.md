@@ -13,6 +13,7 @@
 | S3 | 通过 | 重启后从审批处恢复，diagnose 不重跑；子 Agent 原始输出不回流；`/obs/` 映射可行 |
 | S4 | 通过（有 2 处要改设计） | 标签要按版本时间打；`dataset_version` 这个 metadata 键会被 SDK 覆盖 |
 | S5 | 按降级方案通过 | **basic 授权下服务端 RRF 不可用（403）**，改为客户端融合 |
+| S6 | 通过（2026-11-19 补做；11-20 改悉尼） | 账号只能用悉尼（组织 SCP）；悉尼每小时约 $0.95，演示一次约 $3；EKS 要装 EBS CSI 插件、显式写 gp3 存储类；LangGraph Server 自托管要授权，ADR-002 成立 |
 
 另外确定了模型型号（ADR-008）：诊断 `gemini-3.7-flash`，评审 `gemini-3.1-pro-preview`，embedding `gemini-embedding-001`（768 维）。
 
@@ -537,3 +538,63 @@ LangSmith 记录的费用约为每次调查 0.008 美元。样本只有几次，
 | M3 | 安全主路径符合设计；2 条：执行器拒绝时不写执行结果（线上白等 300 秒、升级原因错）；确认命令不检查调查停在哪 | 都修了（v41）。前一条改了 `exec/core.py`，**作为 M4 零改动验收的例外**（你同意的） |
 
 **M4 零改动的现状**：`git diff --stat m4-base..HEAD -- src/sentinel/core src/sentinel/exec` 只有 `exec/core.py`（+4 行，就是上面这条修复），和 MySQL 专家包无关。
+
+## S6（2026-11-19）：EKS 价格、ECK 存储类、LangGraph Server 授权
+
+> 08 §1 S6 的通过标准是"估算出演示一次的费用"。价格来自 AWS Price List API（不是记忆），查询日 2026-11-19；`terraform plan` 部分推迟到 D15（本机还没有 terraform 和 AWS CLI，也没有凭证）。
+
+**结论：通过，不降级。** 按 01 §5.2 的拓扑，东京区域每小时约 **$0.98**；演示一次（apply → 部署 → 演示 → destroy，按 3 小时算）约 **$3.2**；D15–D16 两天各开 8 小时约 **$16**。远低于"费用太高"的程度。真正的风险是**忘了 destroy：一个月约 $713**，所以 D15 要先建预算告警。
+
+**每小时费用（ap-northeast-1，按需，USD）**
+
+| 项 | 单价（官方） | 用量 | 每小时 |
+|---|---|---|---|
+| EKS 控制面 | $0.10/小时（标准支持期内；版本进入延长支持后再加 $0.50，合计 $0.60/小时） | 1 个集群 | 0.100 |
+| EC2 m6i.xlarge（4 vCPU / 16 GiB） | $0.248/小时 | 3 台 | 0.744 |
+| NAT Gateway | $0.062/小时 + $0.062/GB 处理量 | 1 个 | 0.062 |
+| 公网 IPv4（NAT 的 EIP） | $0.005/小时 | 1 个 | 0.005 |
+| VPC 接口端点（ECR 要 `ecr.api` + `ecr.dkr`） | $0.014/小时/AZ + $0.01/GB | 2 个 × 2 AZ | 0.056 |
+| EBS gp3 | $0.096/GB-月 | 节点根盘 3×20G + PV 约 15G | 0.010 |
+| S3 网关端点 | 免费 | 1 个 | 0 |
+| **合计** | | | **≈ 0.98** |
+
+另外一次性的：NAT 拉取第三方镜像（ES、ECK、Chaos Mesh 等）约 5 GB × $0.062 ≈ $0.3。LLM 调用费和本地一样（每次诊断约 $0.01，见 D14 周报），不算在里面。
+
+**能省的地方**（不改架构）：节点换 3×m6i.large（8 GiB）每小时降到约 $0.61。本地全链路实测用了 7.8 GiB（M1 D1），3×8 GiB 理论上放得下，但 es-target 三个节点各要 1Gi heap、还要给故障注入留余量，**先按 m6i.xlarge 做，跑通之后再看要不要降**。
+
+**ECK 在 EKS 上的存储类**
+
+- EKS 1.30 起，新集群的 `gp2` StorageClass **不再带默认注解**（官方 release notes）；而且非 Auto Mode 集群要先装 **EBS CSI driver 托管插件**（`aws-ebs-csi-driver`，IAM 用 Pod Identity 或 IRSA，托管策略 `AmazonEBSCSIDriverPolicyV2`），否则 PVC 会一直 Pending。
+- 做法：Terraform 装插件，Helm chart 里建一个 `gp3` StorageClass（`provisioner: ebs.csi.aws.com`、`volumeBindingMode: WaitForFirstConsumer`、`allowVolumeExpansion: true`），ECK 的 `volumeClaimTemplates` 显式写 `storageClassName`。注意不要用 EKS Auto Mode 的 `ebs.csi.eks.amazonaws.com`，两个 provisioner 不通用。
+- ECK 的要求：卷名必须是 `elasticsearch-data`；建好之后不能改存储类（Kubernetes 不允许改 `volumeClaimTemplates`），所以第一次就要写对。
+- **本地的 `es-fixed` 在云上不需要**：本地用 loop 盘做静态 PV，是因为 kind 的卷和 Docker VM 共用一块盘，填盘会把 VM 填满（S2）。EKS 上每个 PV 本身就是一块独立的 EBS 卷，填满也只影响它自己。`values-aws.yaml` 把 es-target 的存储类从 `es-fixed` 换成 `gp3`、大小保持 3Gi（gp3 最小 1 GiB），磁盘水位类故障的注入脚本不用改。【待 D15 实测】
+
+**LangGraph Server 自托管：要授权，ADR-002 的前提成立**
+
+- 官方文档（Standalone Server）：自托管的数据面要设 `LANGGRAPH_CLOUD_LICENSE_KEY`（"LangSmith license key"，启动时校验一次），还要能联网做授权校验和用量上报。也就是说，自托管需要向 LangChain 买授权。
+- 我们用 FastAPI 托管调查图（ADR-002），不跑 LangGraph Server，所以没有这个依赖；云上只需要和本地一样的 `LANGSMITH_API_KEY`（追踪和数据集）。
+- 搜索结果里提到过一个按年限量的 Lite 档，在官方部署页上没有找到，不作为依据。
+
+**D15 开工前要准备的（需要你）**
+
+1. 安装 `terraform` 和 `aws` CLI；配好一个 AWS 账号的凭证（建议单独的 IAM 用户或 SSO 角色，只用于这个项目）。
+2. 在账号上建**预算告警**（例如月度 $30，到 50% 发邮件），防止忘记 destroy。
+3. EKS 版本选当前处于**标准支持期**的版本（`terraform plan` 时确认），避免控制面变成 $0.60/小时。
+
+来源：AWS Price List API（`AmazonEKS`、`AmazonEC2`、`AmazonVPC` 的 ap-northeast-1 offer，发布日期 2026-11-11 / 2026-11-18）；[EKS：Use Kubernetes volume storage with Amazon EBS](https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html)；[EKS：Create a storage class](https://docs.aws.amazon.com/eks/latest/userguide/create-storage-class.html)；[EKS 版本说明（1.30 去掉 gp2 默认注解）](https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions-extended.html)；[ECK：Volume claim templates](https://www.elastic.co/docs/deploy-manage/deploy/cloud-on-k8s/volume-claim-templates)；[LangChain：Deploy standalone server](https://docs.langchain.com/langsmith/deploy-standalone-server)。
+
+### S6 补充（2026-11-20）：区域改为悉尼
+
+开工前检查（只读调用）发现：账号 `399643457049` 属于组织 `392527209603`，组织的 SCP 在 17 个常用区域里只放开了 **ap-southeast-2（悉尼）**，东京的 EC2、EKS、ECR、S3、服务配额查询全部显式拒绝。决定改用悉尼（ADR-007 修订）。
+
+| 检查 | 结果 |
+|---|---|
+| 权限模拟（带 `aws:RequestedRegion=ap-southeast-2`） | 建 EKS、节点组、插件、VPC、NAT、EIP、端点、ECR、S3、IAM 角色、Pod Identity 都允许；**`iam:CreateOpenIDConnectProvider` 被拒 → 不用 IRSA，用 Pod Identity** |
+| 配额 | 标准实例 vCPU 32（要 12）；EIP 5（要 1）；m6i.xlarge 的 RunInstances dry-run 通过 |
+| EKS 版本 | 1.34–1.37 都在标准支持期 |
+| 现有资源 | 悉尼没有集群、实例、NAT、EBS 卷、ECR 仓库、S3 桶 |
+| 预算 | 已有每天 $8 的预算告警 |
+
+悉尼价格（Price List API）：m6i.xlarge $0.24/小时，NAT $0.059/小时 + $0.059/GB，gp3 $0.096/GB-月；端点、公网 IPv4、控制面按东京同价估算。合计约 **$0.95/小时**。
+
+**计费粒度**（官方定价页）：EC2、EBS、公网 IPv4 按秒（最少 60 秒）；NAT Gateway、VPC 接口端点不足 1 小时按 1 小时；EKS 控制面写的是"每小时"，保守按整小时算。所以 apply/destroy 一来一回至少按 1 小时计，不要在一小时内反复拆建。

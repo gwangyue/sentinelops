@@ -1,0 +1,21 @@
+# 镜像只需要 src/ config/ env/ uv.lock pyproject.toml 和 .git（ADR-012 的版本哈希）。
+# 不能排除 src/ config/ 下任何被 git 跟踪的文件：否则容器里 git status 会把它们算成"已删除"，巡检被拒绝。
+.venv/
+var/
+fixtures/
+spike/
+docs/
+datasets/
+tests/
+tools/
+deploy/
+Claude outputs/
+**/__pycache__/
+**/.DS_Store
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.terraform/
+*.tfstate*
+.env
+.env.*

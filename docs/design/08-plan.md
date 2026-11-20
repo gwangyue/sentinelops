@@ -158,7 +158,7 @@ sentinel eval gate v<N>                                       # 不安全提议 
 |---|---|---|
 | D13–D14 上午 | MySQL 专家包：2–3 个检测器、约 5 个只读工具、1 个动作、3 个场景；**验收要求 `core/` 和 `exec/` 零改动** | 00 §5、01 §4 |
 | D14 下午 | 周报 `sentinel report weekly`；MCP 只读服务（可选） | 07 §8、02 §8 |
-| D15–D16 | Helm chart 的 `values-aws.yaml`；Terraform（VPC、EKS、ECR）；部署到东京区域；跑一次演示；`terraform destroy` | 01 §5.2 |
+| D15–D16 | 镜像（Dockerfile）；Helm chart 和 `values-aws.yaml`；Terraform（VPC、EKS、ECR、EBS CSI、Pod Identity）；部署到悉尼区域；在 EKS 上跑一次调查；`terraform destroy` 并检查没有残留。**只验证代码在云上能跑通，不跑评测**（2026-11-20 决定：这两天不以效果为目标） | 01 §5.2、ADR-007 |
 
 **M4 验收**：
 
@@ -166,7 +166,7 @@ sentinel eval gate v<N>                                       # 不安全提议 
 git diff --stat <M3 的 tag>..HEAD -- src/sentinel/core src/sentinel/exec   # 应该为空
 sentinel eval run --pack mysql --split dev --version v<N> --reps 3
 sentinel report weekly
-terraform -chdir=deploy/terraform/aws apply && helm install ... && 演示 && terraform destroy
+make aws-up && make aws-patrol && make aws-down   # 在 EKS 上注入一个故障、跑一次调查（看到 diagnosed）；destroy 后打标签的资源应为 0
 ```
 
 ## 4. 进度落后时的砍掉清单（按顺序）

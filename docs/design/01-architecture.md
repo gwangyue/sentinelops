@@ -11,7 +11,7 @@
 3. **写权限物理隔离**：执行器单独一个进程、单独一个 K8s 命名空间、单独一份凭证，而且没有外网出口。诊断 Agent 用的 ES 账号只有 `monitor` 这类只读权限。
 4. **Agent 的记忆存在单独的 ES 集群（es-memory）里，和被注入故障的目标集群（es-target）分开**。否则一注入故障，Agent 自己的记忆也跟着坏了。
 5. **不依赖 LangGraph Server**：用 FastAPI 包装编译好的图，checkpointer 用 Postgres。原因是 LangGraph Server 自托管需要企业授权【据记忆，待验证】，而且用 FastAPI 包装也更容易讲清楚内部原理。
-6. **部署形态有三种**：回放（docker compose，最快）→ 本地全链路（kind）→ AWS EKS（东京区域，只在演示时开启）。三者用同一套镜像，后两者用同一套 Helm chart。
+6. **部署形态有三种**：回放（docker compose，最快）→ 本地全链路（kind）→ AWS EKS（悉尼区域，只在演示时开启）。三者用同一套镜像，后两者用同一套 Helm chart。
 
 ## 内容来源说明
 
@@ -251,7 +251,9 @@ flowchart TB
 
 kind 默认的网络插件 kindnet（kind v0.33）**会执行** NetworkPolicy（S1 实测：有策略时，从不允许的命名空间访问会超时；去掉策略后能连通），本地不需要换插件。写策略时要放行 ECK operator 所在的 `elastic-system` 命名空间，以及 ES 节点之间的流量。
 
-### 5.2 AWS 网络拓扑（东京区域 ap-northeast-1）
+### 5.2 AWS 网络拓扑（悉尼区域 ap-southeast-2）
+
+> 2026-11-20 从东京改为悉尼：账号所在组织的 SCP 只放开了 ap-southeast-2（实测 17 个区域，其余全部显式拒绝），见 ADR-007 修订。
 
 ```
                           Internet
@@ -279,9 +281,9 @@ kind 默认的网络插件 kindnet（kind v0.33）**会执行** NetworkPolicy（
 | 入口 | 不用 ALB，用 `kubectl port-forward` | 只有 CLI 一个用户，不暴露公网，就少一个攻击面 |
 | Postgres | 和本地一样跑在集群内，不用 RDS | 本地和云同构优先；RDS 作为升级选项写进 ADR |
 | ES | ECK 跑在集群内，不用 Elastic Cloud | 故障注入需要控制节点；Elastic Cloud 上无法注入节点级故障 |
-| 密钥 | 第一版用脚本从本地 `.env` 生成 K8s Secret | 主路径优先；之后可升级为 Secrets Manager + External Secrets |
-| 节点规格 | 3 × m6i.xlarge（4 vCPU / 16 GiB）【估算】 | 能放下 es-target 3 节点和其他所有组件 |
-| 成本控制 | 只在演示时 `terraform apply`，用完就 `destroy` | EKS 控制面按小时计费【据记忆：约 0.10 美元/小时】，加上 3 台节点和 NAT，常开每月要几百美元【估算】 |
+| 密钥 | 第一版用脚本从本地环境变量生成 K8s Secret | 主路径优先；之后可升级为 Secrets Manager + External Secrets |
+| 节点规格 | 3 × m6i.xlarge（4 vCPU / 16 GiB），悉尼 $0.24/小时/台 | 能放下 es-target 3 节点和其他所有组件；跑通后可试 m6i.large（约省 40%） |
+| 成本控制 | 只在演示时 `terraform apply`，用完就 `destroy`；账号上建预算告警 | S6 实查（2026-11-19 东京、2026-11-20 悉尼）：控制面 $0.10/小时，加上 3 台节点、NAT 和 ECR 端点，悉尼合计约 $0.95/小时；演示一次约 $3，常开一个月约 $700（spike-results S6） |
 | 数据出境 | 工具输出会发往 Gemini API 和 LangSmith（美国或欧盟区域） | 作品项目可以接受；企业环境需要加脱敏钩子，见 07 篇 |
 
 ## 6. 凭证与权限矩阵

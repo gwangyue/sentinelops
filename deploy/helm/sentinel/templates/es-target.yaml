@@ -1,0 +1,72 @@
+{{/* es-target：被注入故障的目标集群（01 §5）。内容和 deploy/kind/manifests/es-target.yaml 一致，存储类按 values 换 */}}
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: es-target
+  namespace: targets
+spec:
+  version: {{ .Values.esVersion }}
+  auth:
+    roles:
+      - secretName: sentinel-readonly-role
+    fileRealm:
+      - secretName: sentinel-ro-user
+      - secretName: sentinel-exec-user   # 执行器（ADR-005）
+  nodeSets:
+    - name: data
+      count: {{ .Values.esTarget.nodes }}
+      config:
+        # 节点上没有调 vm.max_map_count（kind 和 EKS 默认节点都是），关掉 mmap 避免启动失败
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: "-Xms{{ .Values.esTarget.heap }} -Xmx{{ .Values.esTarget.heap }}"
+              resources:
+                requests: { memory: {{ .Values.esTarget.memory }}, cpu: 500m }
+                limits: { memory: {{ .Values.esTarget.memory }} }
+      volumeClaimTemplates:
+        - metadata: { name: elasticsearch-data }   # ECK 要求这个名字
+          spec:
+            accessModes: [ReadWriteOnce]
+            {{- include "sentinel.storageClass" .Values.storage.esTargetClass | indent 12 }}
+            resources: { requests: { storage: {{ .Values.esTarget.disk }} } }
+---
+# 只读角色（01 §6，S1 实测的最小权限）和执行器角色（不用 manage：索引级的 manage 包含删除索引）
+apiVersion: v1
+kind: Secret
+metadata: { name: sentinel-readonly-role, namespace: targets }
+stringData:
+  roles.yml: |-
+    sentinel_readonly:
+      cluster: [monitor]
+      indices:
+        - names: ["*"]
+          privileges: [monitor, view_index_metadata]
+    sentinel_executor:
+      cluster: [monitor, "cluster:admin/settings/update", "cluster:admin/reroute"]
+      indices:
+        - names: ["*"]
+          privileges: [monitor, view_index_metadata, "indices:admin/settings/update"]
+---
+# ECK 的 fileRealm 支持 basic-auth 类型的 Secret，roles 键写角色名
+apiVersion: v1
+kind: Secret
+metadata: { name: sentinel-ro-user, namespace: targets }
+type: kubernetes.io/basic-auth
+stringData:
+  username: sentinel-ro
+  password: {{ include "sentinel.pw" (list $ "ro") | quote }}
+  roles: sentinel_readonly
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: sentinel-exec-user, namespace: targets }
+type: kubernetes.io/basic-auth
+stringData:
+  username: sentinel-exec
+  password: {{ include "sentinel.pw" (list $ "exec") | quote }}
+  roles: sentinel_executor

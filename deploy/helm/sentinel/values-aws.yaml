@@ -1,0 +1,9 @@
+# EKS（悉尼，01 §5.2）。image.repository 和 tag 由 deploy/aws/aws-up.sh 用 --set 传入（ECR 地址、git 提交）
+image:
+  pullPolicy: Always
+
+storage:
+  createGp3: true
+  # 不需要 es-fixed：本地是因为 kind 的卷和 Docker VM 共用一块盘（S2）；EBS 上每个 PV 是独立的卷，填满只影响自己
+  esTargetClass: gp3
+  defaultClass: gp3

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sentinel
+description: SentinelOps 的全部组件（01 §5.1 的四个命名空间）。本地和云上同一个 chart，只换 values（ADR-007）
+type: application
+version: 0.1.0
+appVersion: "m4"

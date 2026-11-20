@@ -1,0 +1,42 @@
+# 默认值按 kind 写；云上用 values-aws.yaml 覆盖（ADR-007：同一个 chart，只换 values）。
+# TODO(edge): kind-up.sh 还在用 deploy/kind/manifests/，没切到这个 chart；mysql-target 和 Chaos Mesh 也还没进 chart
+
+image:
+  repository: sentinelops
+  tag: dev
+  pullPolicy: IfNotPresent
+
+# 存储类：kind 上 es-target 用固定大小的 loop 盘（es-fixed，S2）；云上每个 PV 本身就是独立的 EBS 卷
+storage:
+  createGp3: false            # 云上建一个 gp3 的 StorageClass（EBS CSI，S6）
+  esTargetClass: es-fixed
+  defaultClass: ""            # 空字符串 = 集群默认存储类
+
+esVersion: 9.5.3
+
+esTarget:
+  nodes: 3
+  heap: 1g
+  memory: 2Gi
+  disk: 3Gi
+  # 固定连 data-0：故障都打在 data-2 上，连 Service 可能正好连到被注入故障的 Pod（D2 发现，同 dev-env.sh）
+  agentHost: es-target-es-data-0.es-target-es-data.targets.svc
+
+esMemory:
+  heap: 512m
+  memory: 1Gi
+  disk: 2Gi
+
+postgres:
+  image: postgres:16
+  disk: 1Gi
+
+agent:
+  replicas: 1
+  memory: 1Gi
+  # Gemini / LangSmith 的 key 不经过 helm（不进 release 记录），由部署脚本用 kubectl 建这个 Secret
+  llmSecret: sentinel-llm
+
+executor:
+  enabled: true
+  memory: 512Mi

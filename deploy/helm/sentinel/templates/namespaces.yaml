@@ -1,0 +1,26 @@
+{{/* 01 §5.1 的四个命名空间。release 本身装在 default 里，所以这四个都归 chart 管（destroy 前 helm uninstall 会一起删） */}}
+{{- range list "sentinel-system" "sentinel-exec" "sentinel-data" "targets" }}
+apiVersion: v1
+kind: Namespace
+metadata: { name: {{ . }} }
+---
+{{- end }}
+{{- if .Values.storage.createGp3 }}
+# gp3 存储类（S6）：EBS CSI 托管插件的 provisioner 是 ebs.csi.aws.com（EKS Auto Mode 的 ebs.csi.eks.amazonaws.com 不通用）。
+# 存储类建好以后不能改（ECK 的 volumeClaimTemplates 也不能改），第一次就要写对
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations: { storageclass.kubernetes.io/is-default-class: "true" }
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+# Delete：helm uninstall 删掉 PVC 时 EBS 卷跟着删；这些卷不在 Terraform 的 state 里，不删就会一直计费
+reclaimPolicy: Delete
+parameters:
+  type: gp3
+  encrypted: "true"
+  # destroy 之后按标签检查有没有残留（make aws-down 的最后一步）
+  tagSpecification_1: "project=sentinelops"
+{{- end }}
