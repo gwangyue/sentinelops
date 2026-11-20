@@ -1,6 +1,6 @@
-# golden-demo.md 的 10 个步骤在哪个里程碑打开（规则 2）。
+# golden-demo.md 的 11 个步骤在哪个里程碑打开（规则 2）。
 # opened_through：已经结束的最近一个里程碑；它和它之前的步骤都要求通过。每个里程碑结束时改这一行（08 §6.6）。
-opened_through: M4     # none | M1 | M2 | M3 | M4（M3 结束时打开第 5–8 步；M4 结束时改成 M4）
+opened_through: M4     # none | M1 | M2 | M3 | M4 | M5（M3 结束时打开第 5–8 步；M4 结束时改成 M4）
 steps:
   - { n: 1,  title: "集群健康，巡检不调用 LLM",  command: "sentinel patrol es-target",                        open_at: M1 }
   - { n: 2,  title: "注入故障",                  command: "sentinel bench inject es.disk_watermark.single",   open_at: M1 }
@@ -12,3 +12,4 @@ steps:
   - { n: 8,  title: "再次注入同类故障，记忆生效", command: "重复第 2、3 步",                                   open_at: M3 }
   - { n: 9,  title: "收敛曲线和记忆增益",        command: "sentinel eval curve --pack es",                    open_at: M2 }
   - { n: 10, title: "治理周报和审计校验",        command: "sentinel report weekly · sentinel audit verify",   open_at: M4 }
+  - { n: 11, title: "在飞书里审批",              command: "飞书 dev 群点审批卡片「批准」",                     open_at: M5 }

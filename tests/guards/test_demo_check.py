@@ -1,8 +1,11 @@
-from tools.demo_check import CHECKS, run
+import yaml
+from tools.demo_check import CHECKS, STEPS_FILE, run
 
 
-def test_all_ten_steps_registered() -> None:
-    assert sorted(CHECKS) == list(range(1, 11))
+def test_all_steps_registered() -> None:
+    # 和 demo_steps.yaml 对齐，而不是写死个数：M5 加了第 11 步（09 篇），以后加步骤不用再改这里
+    steps = yaml.safe_load(STEPS_FILE.read_text(encoding="utf-8"))["steps"]
+    assert sorted(CHECKS) == [s["n"] for s in steps]
 
 
 def test_nothing_opened_exits_zero() -> None:

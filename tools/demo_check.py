@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-MILESTONES = ["none", "M1", "M2", "M3", "M4"]
+MILESTONES = ["none", "M1", "M2", "M3", "M4", "M5"]
 STEPS_FILE = Path(__file__).with_name("demo_steps.yaml")
 
 
@@ -285,7 +285,8 @@ def step9_curve_and_ablation() -> tuple[Status, str]:
 SCENARIO = Path(__file__).resolve().parents[1] / "src/sentinel/packs/es/scenarios/disk_watermark.single.yaml"
 
 # 步骤编号 → 检查函数。实现某一步的那天，在这里换成真正的检查。
-CHECKS: dict[int, Callable[[], tuple[Status, str]]] = {n: _not_implemented for n in range(1, 11)}
+# 第 11 步（飞书审批）在 M5 D19 实现
+CHECKS: dict[int, Callable[[], tuple[Status, str]]] = {n: _not_implemented for n in range(1, 12)}
 CHECKS[1] = step1_patrol_healthy
 CHECKS[2] = step2_inject
 CHECKS[3] = step3_diagnosis

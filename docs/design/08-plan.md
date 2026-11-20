@@ -29,6 +29,7 @@
 | S4 | LangSmith：数据集版本标签和 split；`evaluate()` 的 `num_repetitions`、`metadata`、`experiment_prefix`；通过 SDK 拉取结果；缓存对重复运行的影响 | 用 3 个假用例跑一次完整流程 | 能按 `agent_version` 筛选实验结果；3 次重复的结果确实不同 | metadata 不行：把版本号写进实验名称；拉取不方便：本地同时保存一份结果 | 06 §9 |
 | S5 | es-memory：RRF retriever 在默认授权下是否可用；Gemini embedding 的维度和调用方式 | 建一个索引，写入 10 条数据，执行 §3.3 的查询 | 混合检索能返回结果 | RRF 不可用：改为客户端融合 | 05 §3.3 |
 | S6 | （放在 M4 之前做）EKS 的当前价格；ECK 在 EKS 上的存储类；LangGraph Server 自托管是否需要授权 | 查阅文档；`terraform plan` | 估算出演示一次的费用 | 费用太高：只做 `terraform plan` 和本地 kind 演示，云上部署作为可选项 | 01 §5.2、ADR-002 |
+| S7 | （放在 M5 之前做）飞书长连接能否收消息和卡片按钮回传；同一应用多个客户端时事件是否只投给一个；卡片更新；回调时限；回调签名校验 | 在飞书开放平台建 dev 应用，用 `lark-oapi` 写最小收发程序（`spike/s7/`） | 长连接下能收到指令和卡片点击，并能更新卡片 | 卡片回传不能走长连接：dev 用 HTTP 回调 + 隧道，prod 加 Ingress，先回来和负责人确认（改变网络边界） | 09 §7、§10、ADR-015 |
 
 **Day 0 的产出**：一份 `docs/design/spike-results.md`，记录每项验证的结果和实际数字，并据此修正 00–07 篇中相关的【待验证】标记。
 
@@ -169,6 +170,27 @@ sentinel report weekly
 make aws-up && make aws-patrol && make aws-down   # 在 EKS 上注入一个故障、跑一次调查（看到 diagnosed）；destroy 后打标签的资源应为 0
 ```
 
+### M5 飞书 ChatOps（Day 17–21，2026-11-20 新增）
+
+设计见 09 篇，范围变更见 ADR-015。不改 Agent 行为，不冻结新版本，不重新评测（上线版本仍然是 v41）。每天开一个新会话。
+
+| 天 | 任务 | 引用 |
+|---|---|---|
+| D17 | 设计（09 篇、ADR-015、本节）；S7 技术验证（**前置条件：负责人在飞书开放平台建好 dev 和 prod 两个自建应用**） | 09 全篇 |
+| D18 | 推送：`Store.audit_events_since`、`notify_cursor` 迁移、notifier、卡片模板、`FeishuClient` Protocol 和假实现 | 09 §4 |
+| D19 | 卡片审批：白名单、风险上限、high 只展示、后台恢复、重复点击；把 CLI `_decide` / `approvals show` 的逻辑抽成共用函数 | 09 §4.3、§5.1–5.2 |
+| D20 | 固定指令、帮助卡片和按钮、`/freeze` 开关、bench 只在 dev；在 kind 上用 dev bot 跑通整条链路 | 09 §5.3、§6 |
+| D21 | EKS：Helm Deployment `chatops`、`sentinel-feishu` secret；prod bot 跑一次；独立审阅；M5 报告和代码导览；`aws-down` | 09 §7、§9 |
+
+**M5 验收**：
+
+```
+make check                     # 含 chatops 单元测试和 import-linter（chatops 不能 import exec）
+make demo-check                # 第 11 步打开
+sentinel chatops serve         # dev bot：/help → /bench inject → 审批卡片 → 点批准 → verify.passed 卡片；开关关闭时 /freeze 被拒
+make aws-up && （prod bot：/patrol + 一次审批） && make aws-down
+```
+
 ## 4. 进度落后时的砍掉清单（按顺序）
 
 | 顺序 | 砍掉 | 影响 |
@@ -282,6 +304,7 @@ docs/design/03-contracts.md、08-plan.md 中本里程碑的任务和验收、gol
 | M2 | 5 | | |
 | M3 | 3 | | |
 | M4 | 4 | 日历上 3 天：11-11（D13–D14）、11-19（S6）、11-20（D15–D16 和收尾）；会话墙钟时间没有统计 | D15–D16 有约 1 小时花在账号限制上（区域 SCP、免费套餐），见 docs/reports/M4-report.md |
+| M5 | 5 | | |
 
 ## 来源与核实说明
 
