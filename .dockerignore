@@ -19,3 +19,5 @@ Claude outputs/
 *.tfstate*
 .env
 .env.*
+# 凭证文件（feishu-*.env 等）：万一被复制进仓库，也不能随 COPY . . 打进镜像
+*.env

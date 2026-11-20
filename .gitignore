@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .env
 .env.*
+# 凭证文件（如 feishu-dev.env / feishu-prod.env）应放在 ~/.config/sentinelops/；万一被复制进仓库也不会被提交
+*.env
 fixtures/**/*.jsonl
 !fixtures/index.jsonl
 .pytest_cache/
