@@ -4,7 +4,8 @@
 env_label: kind-dev              # 每张卡片标题上的环境标签
 domain: https://open.feishu.cn   # 国内飞书（S7）；Lark 国际版是 https://open.larksuite.com
 chat_id: null                    # null：读 FEISHU_CHAT_ID（群 ID 不进仓库）
-approvers: {}                    # open_id → 名字；不在这里的人点按钮一律拒绝（09 §5.1）。open_id 按应用区分
+approvers:                       # open_id → 名字；不在这里的人点按钮一律拒绝（09 §5.1）。open_id 按应用区分，只在 dev 应用里有效
+  ou_5f5f7fa36c27954fc006651e167fad8b: yuewang
 approval:
   max_risk_via_chat: medium      # 09 §2 D3：low | medium | high
 high_risk_enabled: false         # true：飞书能审批 high，也能 /freeze（09 §2 D4）

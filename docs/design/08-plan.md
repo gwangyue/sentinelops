@@ -179,7 +179,7 @@ make aws-up && make aws-patrol && make aws-down   # 在 EKS 上注入一个故�
 | D17 | 设计（09 篇、ADR-015、本节）；S7 技术验证（**前置条件：负责人在飞书开放平台建好 dev 和 prod 两个自建应用**） | 09 全篇 |
 | D18 | 推送：`Store.audit_events_since`、`notify_cursor` 迁移、notifier、卡片模板、`FeishuClient` Protocol 和假实现 | 09 §4 |
 | D19 | 卡片审批：白名单、风险上限、high 只展示、后台恢复、重复点击；把 CLI `_decide` / `approvals show` 的逻辑抽成共用函数 | 09 §4.3、§5.1–5.2 |
-| D20 | 固定指令、帮助卡片和按钮、`/freeze` 开关、bench 只在 dev；在 kind 上用 dev bot 跑通整条链路 | 09 §5.3、§6 |
+| D20 | 固定指令、帮助卡片和按钮、`/freeze` 开关、bench 只在 dev；在 kind 上用 dev bot 跑通整条链路（含 D19 卡片审批的第一次真实点击：D19 只做了离线验收，11-20 决定并到这里） | 09 §5.3、§6 |
 | D21 | EKS：Helm Deployment `chatops`、`sentinel-feishu` secret；prod bot 跑一次；独立审阅；M5 报告和代码导览；`aws-down` | 09 §7、§9 |
 
 **M5 验收**：
