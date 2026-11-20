@@ -3,7 +3,8 @@
 env_label: eks-prod
 domain: https://open.feishu.cn
 chat_id: null
-approvers: {}
+approvers:                       # open_id → 名字；只在 prod 应用里有效（open_id 按应用区分，09 §5.1）。D21 从白名单外拒绝日志里取得
+  ou_7d9291c78ca55847140499d863388534: yuewang
 approval:
   max_risk_via_chat: medium
 high_risk_enabled: false

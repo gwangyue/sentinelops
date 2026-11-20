@@ -1,0 +1,41 @@
+{{- if .Values.chatops.enabled }}
+{{/*
+飞书 ChatOps（09 §7；M5 D21）：`sentinel chatops serve`，长连接收卡片点击和指令 + 推送，和 agent-api 同一个镜像。
+- 单副本：长连接不广播（S7），多副本时一条事件只投给其中一个，没有好处；notifier 的游标也只该有一个人推进。
+- 没有 Service、没有 Ingress：长连接只需要出站（09 §10），保持"没有公网入口"。
+- 凭证：和 agent-api 同一份 sentinel-agent-env（Postgres、只读 ES）和 sentinel-llm（/patrol 要诊断）；
+  飞书的 app_id / app_secret / 群 ID 在 sentinel-feishu 里，由 aws-up.sh 用 kubectl 从本机文件建，不经过 helm。
+- 不挂执行器的写凭证：审批之后照样由 sentinel-exec 里的执行器从 Postgres 读审批再执行（09 §1 第 1 条）。
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: chatops, namespace: sentinel-system }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # 滚动更新会短暂出现两个连接，事件可能被旧 Pod 收走
+  selector: { matchLabels: { app: chatops } }
+  template:
+    metadata:
+      labels: { app: chatops }
+      annotations: { checksum/env: {{ include "sentinel.pw" (list $ "pg") | sha256sum | trunc 12 | quote }} }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      containers:
+        - name: chatops
+          image: {{ include "sentinel.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [sentinel, chatops, serve]
+          env:
+            - { name: SENTINEL_CHATOPS_CONFIG, value: {{ .Values.chatops.config | quote }} }
+            - { name: PYTHONUNBUFFERED, value: "1" }   # 日志立刻出现在 kubectl logs 里
+          envFrom:
+            - secretRef: { name: sentinel-agent-env }
+            - secretRef: { name: {{ .Values.agent.llmSecret }} }
+            - secretRef: { name: {{ .Values.chatops.feishuSecret }} }
+          resources:
+            requests: { memory: 512Mi, cpu: 100m }
+            limits: { memory: {{ .Values.chatops.memory }} }
+          # /patrol 在这个进程里跑调查图，观测记录写 var/；和 agent-api 一样，Pod 重建就丢（TODO(edge) 同 app.yaml）
+          volumeMounts: [{ name: var, mountPath: /app/var }]
+      volumes: [{ name: var, emptyDir: {} }]
+{{- end }}

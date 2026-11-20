@@ -174,7 +174,7 @@ commands: [help, patrol, inv, approvals, bench, freeze]
 ```
 
 - 配置里还有 `domain`：`https://open.feishu.cn`（国内飞书）或 `https://open.larksuite.com`（Lark），应用建在哪边就只能连哪边（S7）。
-- app_id 和 app_secret **不写在配置里**，用环境变量 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`。dev 下 `sentinel chatops serve --env-file ~/.config/sentinelops/feishu-dev.env` 从文件读，不依赖从哪个 shell 启动（S7 踩坑：继承了旧的环境变量）；prod 由 k8s secret 注入。
+- app_id 和 app_secret **不写在配置里**，用环境变量 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`。dev 下 `sentinel chatops serve --env-file ~/.config/sentinelops/feishu-dev.env` 从文件读，不依赖从哪个 shell 启动（S7 踩坑：继承了旧的环境变量）；prod 由 k8s secret 注入。prod 的审批人 open_id 的取法（D21）：先用 prod 凭证在本机临时起一次 serve（审批人为空），在值班群里 @ 机器人，拒绝日志里有 open_id；取到后马上停掉本机进程，再部署。`config/` 在版本哈希里，要在部署前写进配置，只提交一次。
 - 别的群里发来的消息一律忽略。
 - 改配置要重启进程，第一版不做热加载。
 
@@ -184,8 +184,8 @@ commands: [help, patrol, inv, approvals, bench, freeze]
 |---|---|---|
 | 飞书应用 | `SentinelOps-dev`（自建应用 A） | `SentinelOps`（自建应用 B） |
 | 群 | 开发测试群 | 值班群 |
-| 运行位置 | 开发机：`sentinel chatops serve`（kind 现在没有用 Helm 部署 agent） | Helm 新增 Deployment `chatops`（`sentinel-system`，单副本） |
-| 凭证 | 本机环境变量 | k8s secret `sentinel-feishu`，由 `aws-up.sh` 用 `kubectl create secret` 创建（和 `sentinel-llm` 一样），preflight 检查环境变量是否已设置 |
+| 运行位置 | 开发机：`sentinel chatops serve`（kind 现在没有用 Helm 部署 agent） | Helm 新增 Deployment `chatops`（`sentinel-system`，单副本，`Recreate`：滚动更新会短暂有两个长连接，事件可能被旧 Pod 收走；`values.yaml` 里默认关、`values-aws.yaml` 打开） |
+| 凭证 | 本机文件 `~/.config/sentinelops/feishu-dev.env`（`serve --env-file`） | k8s secret `sentinel-feishu`，由 `aws-up.sh` 用 `kubectl create secret --from-env-file ~/.config/sentinelops/feishu-prod.env` 创建（不经过 helm，和 `sentinel-llm` 一样）；preflight 检查文件存在、三个键齐全（D21 改：原设计是检查环境变量，改成读文件，和 dev 的 `--env-file` 一致，避开 S7 继承旧环境变量的坑）。`*.env` 已加入 `.gitignore` 和 `.dockerignore` |
 | 配置 | `config/chatops.dev.yaml` | `config/chatops.prod.yaml` |
 | 网络 | 出站访问飞书 | 出站访问飞书（检查 `netpol.yaml`）；**没有 Ingress、没有公网入口**，因为用的是长连接 |
 

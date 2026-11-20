@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # 在 AWS（悉尼）上建出完整环境（01 §5.2，08 M4 D15–D16）。
-# 负责：state 桶、terraform apply、kubeconfig、镜像构建和推送、ECK operator、Helm chart、Gemini/LangSmith 的 Secret、种子数据。
+# 负责：state 桶、terraform apply、kubeconfig、镜像构建和推送、ECK operator、Helm chart、Gemini/LangSmith 和飞书 prod bot 的 Secret、种子数据。
 # 不负责：跑调查（aws-patrol.sh）、清理（aws-down.sh）。Chaos Mesh 不装：D16 只用 allocation_disabled，靠改集群设置注入。
 # 每一步可以重复执行。开始计费：控制面 + 3 台节点 + NAT + 端点约 $0.95/小时（spike-results S6），用完务必 make aws-down。
 set -euo pipefail
 source "$(dirname "$0")/_common.sh"
+FEISHU_PROD_ENV=${FEISHU_PROD_ENV:-$HOME/.config/sentinelops/feishu-prod.env}
 
 preflight() {
   local t
@@ -14,6 +15,12 @@ preflight() {
   [ "${kv//[^0-9]/}" -ge 36 ] || die "kubectl 版本太旧（1.${kv}），先 brew upgrade kubectl"
   [ -n "${GOOGLE_API_KEY:-}" ] || die "缺少 GOOGLE_API_KEY（诊断和 embedding 要用）"
   [ -n "${LANGSMITH_API_KEY:-}" ] || die "缺少 LANGSMITH_API_KEY"
+  # 飞书 prod bot（09 §7）：从本机文件建 Secret，和 dev 的 --env-file 一样以文件为准（S7：别从 shell 继承旧变量）。
+  # 只检查键名，不读值；kubectl 的 --from-env-file 不认 export 前缀和引号，所以文件必须是纯 KEY=VALUE
+  [ -f "$FEISHU_PROD_ENV" ] || die "缺少飞书 prod 凭证文件 $FEISHU_PROD_ENV（FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_CHAT_ID）"
+  local k; for k in FEISHU_APP_ID FEISHU_APP_SECRET FEISHU_CHAT_ID; do
+    grep -q "^$k=." "$FEISHU_PROD_ENV" || die "$FEISHU_PROD_ENV 里没有 $k=...（不要 export 前缀）"
+  done
   # 镜像里的代码必须对应一个提交（ADR-012）；Dockerfile 里也会再检查一次
   local dirty; dirty=$(git -C "$REPO_ROOT" status --porcelain -- src config uv.lock pyproject.toml)
   [ -z "$dirty" ] || die "影响行为的文件有未提交的改动，先提交：$dirty"
@@ -76,6 +83,9 @@ workloads() {
     --from-literal=GOOGLE_API_KEY="$GOOGLE_API_KEY" --from-literal=LANGSMITH_API_KEY="$LANGSMITH_API_KEY" \
     --from-literal=LANGSMITH_TRACING=true --from-literal=LANGSMITH_PROJECT=sentinelops \
     --dry-run=client -o yaml | kc apply -f - >/dev/null
+  # 飞书 prod bot 的凭证同样不经过 helm。app_secret 等于"能收到这个应用所有点击"（09 §8 T13），只放这一个命名空间
+  kc -n sentinel-system create secret generic sentinel-feishu --from-env-file="$FEISHU_PROD_ENV" \
+    --dry-run=client -o yaml | kc apply -f - >/dev/null
 }
 
 wait_ready() {
@@ -94,6 +104,7 @@ wait_ready() {
   kc -n sentinel-data rollout status statefulset/postgres --timeout=300s
   kc -n sentinel-system rollout status deploy/agent-api --timeout=300s
   kc -n sentinel-exec rollout status deploy/executor --timeout=300s
+  kc -n sentinel-system rollout status deploy/chatops --timeout=300s
 }
 
 preflight

@@ -40,3 +40,10 @@ agent:
 executor:
   enabled: true
   memory: 512Mi
+
+# 飞书 ChatOps（09 §7）。kind 上 chatops 在开发机上跑（sentinel chatops serve --env-file ...），默认不部署
+chatops:
+  enabled: false
+  config: config/chatops.prod.yaml
+  feishuSecret: sentinel-feishu   # 不经过 helm，由 aws-up.sh 用 kubectl 从本机文件建
+  memory: 1Gi
