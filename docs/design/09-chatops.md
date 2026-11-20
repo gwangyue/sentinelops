@@ -216,6 +216,7 @@ commands: [help, patrol, inv, approvals, bench, freeze]
   - import-linter 禁止 chatops → exec
 - **golden-demo 第 11 步**（M5 打开）：回放 + 假飞书。审计里出现 `approval.requested` → 生成审批卡片 → 模拟点击 → `approval.decided`（actor 是 `human:<名字>`，reason 以 `[feishu]` 开头）→ `action.executed` → 推送结果卡片。
 - **kind 手动验证**（dev bot）：`/help` → `/bench inject <场景>` → 收到异常卡片和审批卡片 → 点批准 → 收到 verify.passed；开关关闭时 `/freeze` 被拒绝。
+- **kind 实测（D20，2026-11-20）**：上面这条链路用 dev bot 跑通，审计 `approval.decided`（actor `human:yuewang`，reason `[feishu]`）→ `action.executed`（executor，哈希一致）→ `verify.passed`，从批准到验证通过 2 秒。跑之前要注意两件事：① serve 的 shell 要先 source 只读凭证（`dev-env.sh`；巡检 mysql-target 还要 `mysql-env.sh`，没 source 时巡检会失败，调查会停在 running，TODO(edge)），执行器在另一个 shell 用 `exec-env.sh`；② 版本哈希包含整个 `src/`，chatops 的代码改动也会让当前代码没有对应版本，真实巡检会被拒绝。M5 的处理办法：冻结一个"行为不变"的版本（v43，不评测，上线版本仍是 v41），和 v38–v41 的先例一样。
 - **EKS 只跑一次**：prod bot 跑 `/patrol` 和一次审批，然后 `make aws-down`。
 
 ## 10. L5 判断
