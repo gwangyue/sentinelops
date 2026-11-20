@@ -138,7 +138,7 @@
 
 1. **路由**：按用途选模型。诊断用 Flash 档，评审用 Pro 档，具体型号在技术验证时确定。
 2. **预算**：每次调查有 token 上限，超过就中止并升级给人。
-3. **打标签**：每次调用都带上 `agent_version`、`investigation_id`、`purpose`，方便在 LangSmith 里按这些维度切片。
+3. **打标签**：每次调用都带上 `agent_version`、`investigation_id`、`purpose`，方便在 LangSmith 里按这些维度切片。上报要显式设置 `LANGSMITH_TRACING=true`（和 `LANGSMITH_PROJECT=sentinelops`），只设 key 不会上报（D16 发现：之前 CLI 的巡检一直没有 trace）；评测的 `evaluate()` 会自己打开。测试夹具会清掉这两个开关。
 4. **出口可替换**：默认直接调 Gemini API；在企业环境里改一处配置，就可以切到企业 AI 网关。
 
 ## 4. 仓库结构
@@ -282,8 +282,8 @@ kind 默认的网络插件 kindnet（kind v0.33）**会执行** NetworkPolicy（
 | Postgres | 和本地一样跑在集群内，不用 RDS | 本地和云同构优先；RDS 作为升级选项写进 ADR |
 | ES | ECK 跑在集群内，不用 Elastic Cloud | 故障注入需要控制节点；Elastic Cloud 上无法注入节点级故障 |
 | 密钥 | 第一版用脚本从本地环境变量生成 K8s Secret | 主路径优先；之后可升级为 Secrets Manager + External Secrets |
-| 节点规格 | 3 × m6i.xlarge（4 vCPU / 16 GiB），悉尼 $0.24/小时/台 | 能放下 es-target 3 节点和其他所有组件；跑通后可试 m6i.large（约省 40%） |
-| 成本控制 | 只在演示时 `terraform apply`，用完就 `destroy`；账号上建预算告警 | S6 实查（2026-11-19 东京、2026-11-20 悉尼）：控制面 $0.10/小时，加上 3 台节点、NAT 和 ECR 端点，悉尼合计约 $0.95/小时；演示一次约 $3，常开一个月约 $700（spike-results S6） |
+| 节点规格 | 3 × m7i-flex.large（2 vCPU / 8 GiB），悉尼 $0.12/小时/台。原计划 m6i.xlarge，D16 实测账号是免费套餐，只能启动符合免费条件的实例类型 | 3 台 24 GiB，整套组件的内存 requests 约 9 GiB，D16 实测能跑通 |
+| 成本控制 | 只在演示时 `terraform apply`，用完就 `destroy`；账号上建预算告警 | S6 实查（2026-11-19 东京、2026-11-20 悉尼）：控制面 $0.10/小时，加上 3 台节点、NAT 和 ECR 端点，悉尼合计约 $0.59/小时（D16 换成 m7i-flex.large 之后）；演示一次约 $1–2，常开一个月约 $430（spike-results S6、D16） |
 | 数据出境 | 工具输出会发往 Gemini API 和 LangSmith（美国或欧盟区域） | 作品项目可以接受；企业环境需要加脱敏钩子，见 07 篇 |
 
 ## 6. 凭证与权限矩阵

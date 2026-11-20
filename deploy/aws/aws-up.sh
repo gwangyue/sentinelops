@@ -11,13 +11,13 @@ preflight() {
   for t in terraform kubectl helm docker; do command -v "$t" >/dev/null || die "缺少 $t"; done
   # kubectl 只保证和相差一个小版本的集群兼容；集群是 1.37
   local kv; kv=$(kubectl version --client -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["clientVersion"]["minor"])')
-  [ "${kv//[^0-9]/}" -ge 36 ] || die "kubectl 版本太旧（1.$kv），先 brew upgrade kubectl"
+  [ "${kv//[^0-9]/}" -ge 36 ] || die "kubectl 版本太旧（1.${kv}），先 brew upgrade kubectl"
   [ -n "${GOOGLE_API_KEY:-}" ] || die "缺少 GOOGLE_API_KEY（诊断和 embedding 要用）"
   [ -n "${LANGSMITH_API_KEY:-}" ] || die "缺少 LANGSMITH_API_KEY"
   # 镜像里的代码必须对应一个提交（ADR-012）；Dockerfile 里也会再检查一次
   local dirty; dirty=$(git -C "$REPO_ROOT" status --porcelain -- src config uv.lock pyproject.toml)
   [ -z "$dirty" ] || die "影响行为的文件有未提交的改动，先提交：$dirty"
-  log "账号 $ACCOUNT，区域 $REGION"
+  log "账号 ${ACCOUNT}，区域 $REGION"
 }
 
 state_bucket() {
@@ -67,12 +67,14 @@ workloads() {
       -n elastic-system --create-namespace --wait
   fi
   # release 装在 default：chart 自己创建四个命名空间（namespaces.yaml）
-  log "安装 / 升级 chart（镜像 $IMAGE_TAG）"
+  log "安装 / 升级 chart（镜像 ${IMAGE_TAG}）"
   hm upgrade --install sentinel "$CHART" -n default -f "$CHART/values-aws.yaml" \
     --set image.repository="$IMAGE_REPO" --set image.tag="$IMAGE_TAG"
   # key 不经过 helm（不进 release 记录）。命名空间由上一步的 chart 创建；Secret 晚到几秒，kubelet 会自己重试
+  # LANGSMITH_TRACING 必须显式打开，只设 key 不会上报 trace（D16 发现：之前 CLI 的巡检一直没有 trace）
   kc -n sentinel-system create secret generic sentinel-llm \
     --from-literal=GOOGLE_API_KEY="$GOOGLE_API_KEY" --from-literal=LANGSMITH_API_KEY="$LANGSMITH_API_KEY" \
+    --from-literal=LANGSMITH_TRACING=true --from-literal=LANGSMITH_PROJECT=sentinelops \
     --dry-run=client -o yaml | kc apply -f - >/dev/null
 }
 

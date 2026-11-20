@@ -598,3 +598,32 @@ LangSmith 记录的费用约为每次调查 0.008 美元。样本只有几次，
 悉尼价格（Price List API）：m6i.xlarge $0.24/小时，NAT $0.059/小时 + $0.059/GB，gp3 $0.096/GB-月；端点、公网 IPv4、控制面按东京同价估算。合计约 **$0.95/小时**。
 
 **计费粒度**（官方定价页）：EC2、EBS、公网 IPv4 按秒（最少 60 秒）；NAT Gateway、VPC 接口端点不足 1 小时按 1 小时；EKS 控制面写的是"每小时"，保守按整小时算。所以 apply/destroy 一来一回至少按 1 小时计，不要在一小时内反复拆建。
+
+## M4 D15–D16（2026-11-20）：上云（EKS 悉尼）
+
+**结论：调查图在 EKS 上跑通了。** 按 2026-11-20 的决定只验证代码能跑，不跑评测。`make aws-patrol`：
+
+```
+健康，0 个问题，用时 1.5 秒  inv_01M7VDW66DACF45HS3J44YG38G        ← 注入前：不调用 LLM
+（注入 allocation_disabled，检测器 2 个问题）
+inv_01M7VDY6ZGY15264FCTV9JPP85  状态 diagnosed  问题 2 个  用时 12.0 秒
+  H1 0.85 [es.node_unavailable]   H2 0.75 [es.allocation_disabled]   证据支持率 100%   工具调用 4 次
+```
+
+H1 不是注入的根因：调查开始时 data-2 还没重新加入集群，"节点少一个"的症状最明显。这次不评判对错（等症状的条件是"检测器触发"，比 bench 的等待条件宽），只记下来。两次巡检都在 LangSmith 的 `sentinelops` 项目里有 trace。
+
+**这两天的发现**
+
+| # | 发现 | 处理 |
+|---|---|---|
+| 1 | **账号是免费套餐**：只能启动符合免费条件的实例类型，m6i.xlarge 的 RunInstances 被拒（"not eligible for Free Tier"）。节点组卡在 CREATING，连 ASG 都没建出来；dry-run 和权限模拟都查不出这个限制 | 节点改为 3 × m7i-flex.large（2 vCPU / 8 GiB，免费条件里最大的），每小时从约 $0.95 降到约 $0.59。卡住的 apply 用 SIGINT 正常退出，节点组以 tainted 记进 state，下次 apply 自动替换；旧节点组删除用了 14 分钟 |
+| 2 | **LangSmith 一直没有 CLI 巡检的 trace**：只设了 `LANGSMITH_API_KEY`，没设 `LANGSMITH_TRACING=true`；之前看到的都是 `evaluate()` 自己打开追踪的实验 | 云上的 Secret 加上两个开关；本地要在 shell 里设；测试夹具清掉开关（01 §3） |
+| 3 | **执行器先于 Agent 启动就崩溃**：表由 core 的 PgStore 在 Agent 第一次连库时建，执行器按依赖规则不引用 core；本地总是先跑 Agent，掩盖了这个问题 | chart 里给执行器加 initContainer，等 `execution_requests` 出现再启动（本地用临时 Postgres 验证过） |
+| 4 | **bash 3.2（macOS 自带）把 `$VAR，` 里的全角字符当成变量名的一部分**，`set -u` 下直接报 unbound variable | 变量后面紧跟非 ASCII 字符的地方一律写 `${VAR}`；原有的 `_lib.sh`、kind 的两个脚本也有同样写法，一起改了 |
+| 5 | 控制台的"Pod / 节点：数据不可用"：控制台用登录身份访问 K8s API，而访问条目里只有 `terraform-dev-local` | 不影响使用（kubectl 能看）；要在控制台看，需要给登录身份加访问条目和 `AmazonEKSAdminViewPolicy`（它能读 Secret），待负责人决定 |
+
+**容器里的版本**：镜像带 `.git`，容器里算出的 code_sha 和本机一致；云上 Postgres 是新的，`version freeze` 得到 v1，哈希和本地 v42 相同（`sha256:44c134a4c33e…`）。core 和 exec 没有改动。
+
+**清理（`make aws-down`，11:54–12:07）**：`Destroy complete! Resources: 60 destroyed.` 之后按类型直接查：EKS 集群、实例、NAT、EIP、VPC 端点、EBS 卷、子网、安全组、ECR、IAM 角色、日志组全部为 0（剩下的 VPC 是账号自带的默认 VPC）。标签 API 在 destroy 刚结束时还列出 12 个已删除的资源，所以 `aws-down` 的残留判定改为以直接查询为准。
+
+**费用**：资源从 10:57 开到 12:07，按计费粒度（NAT、端点、控制面不足 1 小时按 1 小时）估算约 $0.7–1；以次日 Cost Explorer 为准。

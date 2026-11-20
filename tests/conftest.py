@@ -10,6 +10,13 @@ import pytest
 @pytest.fixture(autouse=True)
 def _test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SENTINEL_ENV", "test")
-    # 本机 shell 里可能带着真实的 key；测试里清掉，即使有代码绕过 guard 也调不通
-    for var in ("GOOGLE_API_KEY", "GEMINI_API_KEY", "LANGSMITH_API_KEY"):
+    # 本机 shell 里可能带着真实的 key；测试里清掉，即使有代码绕过 guard 也调不通。
+    # 追踪开关也清掉：shell 里开了 LANGSMITH_TRACING，测试里的假模型调用也会尝试上报 trace
+    for var in (
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "LANGSMITH_API_KEY",
+        "LANGSMITH_TRACING",
+        "LANGCHAIN_TRACING_V2",
+    ):
         monkeypatch.delenv(var, raising=False)

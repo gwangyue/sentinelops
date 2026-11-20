@@ -10,4 +10,4 @@ export SENTINEL_CRED_ES_READONLY_URL="https://localhost:${_PORT}"
 export SENTINEL_CRED_ES_READONLY_USER=sentinel-ro
 export SENTINEL_CRED_ES_READONLY_PASSWORD="$(kubectl --context "$_CTX" -n targets get secret sentinel-ro-user -o go-template='{{.data.password | base64decode}}')"
 sleep 2
-echo "es-target 只读连接：$SENTINEL_CRED_ES_READONLY_URL（port-forward pid $!）"
+echo "es-target 只读连接：${SENTINEL_CRED_ES_READONLY_URL}（port-forward pid $!）"

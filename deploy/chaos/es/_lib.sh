@@ -15,6 +15,6 @@ U=https://localhost:$_PORT
 es() { curl -sk -u "elastic:$_PW" -H 'content-type: application/json' "$@"; }
 for _ in $(seq 1 20); do es -o /dev/null "$U/" 2>/dev/null && break; sleep 0.5; done
 # 没连上就明确报错：否则后面的 curl 静默失败，脚本退出时什么也不说（M2 录制时撤销偶发失败、stderr 为空）
-es -o /dev/null "$U/" 2>/dev/null || { echo "port-forward 到 es-target-es-data-0 未就绪（端口 $_PORT）" >&2; exit 1; }
+es -o /dev/null "$U/" 2>/dev/null || { echo "port-forward 到 es-target-es-data-0 未就绪（端口 ${_PORT}）" >&2; exit 1; }
 # 写集群设置；值为 null 表示恢复默认
 put_setting() { es -XPUT "$U/_cluster/settings" -d "{\"persistent\":{\"$1\":$2}}" >/dev/null; }

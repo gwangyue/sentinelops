@@ -28,20 +28,28 @@ k8s_cleanup() {
 
 leftovers() {
   # 打了 project=sentinelops 标签的资源：terraform 建的（default_tags）和 EBS CSI 建的卷（存储类的 tagSpecification）。
-  # 标签 API 有几分钟的延迟，刚删的资源可能还会列出来；再加上直接查最贵的几类资源
-  local tagged vols nat eks
+  # 标签 API 有延迟：D16 destroy 完立刻查，还列出了 12 个已经删掉的资源。所以判定以"按类型直接查"为准，
+  # 覆盖所有按小时计费的资源（集群、实例、NAT、EIP、接口端点）和 EBS 卷；标签列表只作提示
+  local tagged vols nat eks inst eip vpce
   tagged=$(aws resourcegroupstaggingapi get-resources --region "$REGION" \
     --tag-filters Key=project,Values=sentinelops --query 'ResourceTagMappingList[].ResourceARN' --output text)
   vols=$(aws ec2 describe-volumes --region "$REGION" --query 'length(Volumes)' --output text)
   nat=$(aws ec2 describe-nat-gateways --region "$REGION" --filter Name=state,Values=available,pending \
     --query 'length(NatGateways)' --output text)
   eks=$(aws eks list-clusters --region "$REGION" --query 'length(clusters)' --output text)
-  log "残留检查：EKS 集群 $eks，NAT $nat，EBS 卷 $vols"
+  inst=$(aws ec2 describe-instances --region "$REGION" \
+    --filters Name=instance-state-name,Values=pending,running,stopping,stopped \
+    --query 'length(Reservations[].Instances[])' --output text)
+  eip=$(aws ec2 describe-addresses --region "$REGION" --query 'length(Addresses)' --output text)
+  vpce=$(aws ec2 describe-vpc-endpoints --region "$REGION" \
+    --filters Name=vpc-endpoint-state,Values=available,pending,deleting --query 'length(VpcEndpoints)' --output text)
+  log "残留检查：EKS 集群 ${eks}，实例 ${inst}，NAT ${nat}，EIP ${eip}，VPC 端点 ${vpce}，EBS 卷 $vols"
   if [ -n "$tagged" ]; then
-    log "带 project=sentinelops 标签的资源（刚删的可能要几分钟才从列表里消失）："
+    log "标签 API 还列出这些（有延迟，以上面的直接查询为准）："
     echo "$tagged" | tr '\t' '\n' | grep -v ":s3:::$STATE_BUCKET" | sed 's/^/  /'
   fi
-  [ "$eks" = 0 ] && [ "$nat" = 0 ] && [ "$vols" = 0 ] || die "还有计费资源没删，去控制台确认"
+  [ "$eks" = 0 ] && [ "$inst" = 0 ] && [ "$nat" = 0 ] && [ "$eip" = 0 ] && [ "$vpce" = 0 ] && [ "$vols" = 0 ] \
+    || die "还有计费资源没删，去控制台确认"
   log "干净（state 桶 $STATE_BUCKET 保留）"
 }
 

@@ -78,6 +78,28 @@ spec:
       annotations: { checksum/env: {{ $pgUrl | sha256sum | trunc 12 | quote }} }
     spec:
       securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      # 表由 core 的 PgStore 在 Agent 第一次连库时建（core/store/sql/），执行器按依赖规则不引用 core，自己不建表。
+      # 本地总是先跑 Agent，云上执行器先起来就查不到 execution_requests，崩溃重启到 Agent 建完表为止（D16 实测）。
+      # 这里等表出现再启动，不改 core 和 exec
+      initContainers:
+        - name: wait-schema
+          image: {{ include "sentinel.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python
+            - -c
+            - |
+              import os, time, psycopg
+              while True:
+                  try:
+                      with psycopg.connect(os.environ["SENTINEL_PG_URL"]) as c:
+                          if c.execute("SELECT to_regclass('execution_requests')").fetchone()[0]:
+                              break
+                  except psycopg.OperationalError:
+                      pass  # Postgres 还没起来
+                  print("等待 Agent 建表（execution_requests）", flush=True)
+                  time.sleep(5)
+          envFrom: [{ secretRef: { name: sentinel-exec-env } }]
       containers:
         - name: executor
           image: {{ include "sentinel.image" . }}

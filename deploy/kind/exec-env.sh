@@ -8,4 +8,4 @@ export SENTINEL_CRED_ES_EXECUTOR_URL="https://localhost:${_PORT}"
 export SENTINEL_CRED_ES_EXECUTOR_USER=sentinel-exec
 export SENTINEL_CRED_ES_EXECUTOR_PASSWORD="$(kubectl --context "$_CTX" -n targets get secret sentinel-exec-user -o go-template='{{.data.password | base64decode}}')"
 sleep 2
-echo "执行器写连接：$SENTINEL_CRED_ES_EXECUTOR_URL（port-forward pid $!）"
+echo "执行器写连接：${SENTINEL_CRED_ES_EXECUTOR_URL}（port-forward pid $!）"
