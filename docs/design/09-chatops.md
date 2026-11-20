@@ -15,7 +15,7 @@
 
 ## 内容来源说明
 
-标记体系同 00 篇。飞书开放平台的行为（长连接、卡片回传、多客户端的投递方式、回调时限）在写这篇时都**没有实测**，标为【待验证】，由 S7（08 篇 §1）验证。需求来自 2026-11-20 和负责人的对话，6 个决定见 §2。
+标记体系同 00 篇。飞书开放平台的行为（长连接、卡片回传、多客户端的投递方式、回调时限）在写这篇时没有实测，S7（2026-11-20）实测之后已经改成实测结论（见 spike-results.md S7）。需求来自 2026-11-20 和负责人的对话，6 个决定见 §2。
 
 ## 本篇要回答的核心问题
 
@@ -89,7 +89,7 @@ flowchart LR
 - `audit_events.seq` 是 bigserial，追加时整表加锁（`governance/audit.py` 的 `pg_append`），所以 `WHERE seq > :cursor ORDER BY seq` 不会漏掉事件，也不会读乱顺序。
 - 新增存储接口 `Store.audit_events_since(seq, types)`，实现在 `core/store/{base,postgres,memory}.py`。这是存储接口，**不是契约**。
 - 新增迁移 `004_chatops.sql`：`notify_cursor(env text primary key, last_seq bigint)`。
-- 发送成功之后才推进游标（至少一次投递）。同一事件重复推送时，卡片带上事件 ID，用飞书消息的幂等字段去重【待验证：S7】。
+- 发送成功之后才推进游标（至少一次投递）。同一事件重复推送时，卡片带上事件 ID，用发送消息接口的幂等字段去重【待验证：S7 没测，D18 实测】。
 - 推送失败只记日志、退避重试，**不写审计、不影响调查**。
 - TODO(edge)：长时间停机后积压了大量事件时，要合并成一张汇总卡片。
 
@@ -117,7 +117,7 @@ flowchart LR
 1. 按钮的 value 里**只带 `approval_id`**。哈希、方案都由服务端从 Postgres 重新读取，不信任卡片里的任何内容（T3、T4）。
 2. 校验身份（§5.1），再校验风险上限（§4.3）。高于上限时拒绝，因为按钮可能被伪造。
 3. 调 `record_decision(...)`（`core/graph/remediate.py`）。`DuplicateError` → 卡片更新为"已被 <谁> 决定过"。
-4. **立刻**把卡片更新为"已批准，执行中"，然后在后台线程里调 `resume_online(...)`。原因是飞书的回调要求几秒内响应【待验证：S7】，而 `resume_online` 最多要阻塞 `EXEC_WAIT_S=300` 秒。
+4. **立刻**把卡片更新为"已批准，执行中"，然后在后台线程里调 `resume_online(...)`。原因是飞书的回调**超过约 3 秒就判定超时，而且不会重发**（S7 实测：2.5 秒正常，4 秒超时），而 `resume_online` 最多要阻塞 `EXEC_WAIT_S=300` 秒。
 5. 执行和验证的结果不在这里返回，由 notifier 按审计事件推送（`verify.passed` / `verify.failed`）。
 
 CLI 的 `_decide` 和 `approvals show` 里的逻辑要抽到一个共用的函数里，CLI 和 chatops 都调它，避免同一套规则写两份。
@@ -135,7 +135,7 @@ CLI 的 `_decide` 和 `approvals show` 里的逻辑要抽到一个共用的函�
 | `/unfreeze` | — | ✗ 一律提示用 CLI | ✗ |
 | 其他任何输入 | 返回帮助卡片 | | |
 
-- 解析是确定性的，不调 LLM。参数逐个校验：target 必须在 `config/governance.yaml` 的 targets 里；scenario 必须在专家包的场景里。
+- 解析是确定性的，不调 LLM。消息文本里的 @ 是 `@_user_1` 这样的占位符（S7），先去掉再解析。参数逐个校验：target 必须在 `config/governance.yaml` 的 targets 里；scenario 必须在专家包的场景里。
 - 长任务（`patrol` 需要诊断时、`bench`）先回一张"已开始"的卡片，跑完之后更新这张卡片。
 - `bench` 为什么用子进程：`record` 要用执行器的写凭证。dev 环境下这个凭证来自开发机上的 `deploy/kind/exec-env.sh`，信任边界和你在终端里敲 CLI 一样。chatops 进程本身不 import `exec/`，也不读写凭证（"写凭证只在 `exec/`"这条护栏不受影响）。
 
@@ -155,7 +155,8 @@ high_risk_enabled: false       # true：飞书可以审批 high，也可以 /fre
 commands: [help, patrol, inv, approvals, bench, freeze]
 ```
 
-- app_id 和 app_secret **不写在配置里**，用环境变量 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`。
+- 配置里还有 `domain`：`https://open.feishu.cn`（国内飞书）或 `https://open.larksuite.com`（Lark），应用建在哪边就只能连哪边（S7）。
+- app_id 和 app_secret **不写在配置里**，用环境变量 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`。dev 下 `sentinel chatops serve --env-file ~/.config/sentinelops/feishu-dev.env` 从文件读，不依赖从哪个 shell 启动（S7 踩坑：继承了旧的环境变量）；prod 由 k8s secret 注入。
 - 别的群里发来的消息一律忽略。
 - 改配置要重启进程，第一版不做热加载。
 
@@ -171,7 +172,7 @@ commands: [help, patrol, inv, approvals, bench, freeze]
 | 网络 | 出站访问飞书 | 出站访问飞书（检查 `netpol.yaml`）；**没有 Ingress、没有公网入口**，因为用的是长连接 |
 
 为什么一定要分成两个 bot：
-1. **长连接不会广播**：同一个应用有多个客户端连着时，一条事件只投给其中一个【待验证：S7】。共用一个 bot 的话，你在本地调试的进程可能会把线上的审批点击"抢走"。
+1. **长连接不会广播**：同一个应用有多个客户端连着时，一条事件只投给其中一个（S7 实测：A、B 同时在线，3 个事件各只投给一个）。共用一个 bot 的话，你在本地调试的进程可能会把线上的审批点击"抢走"。
 2. `open_id` 按应用区分，白名单本来就要按环境分开配置。
 3. 名字和卡片标题都带环境标签，减少"在错误的群里点了批准"的可能。
 4. 凭证隔离：dev 的 secret 泄露了，也碰不到 prod。
@@ -180,7 +181,7 @@ commands: [help, patrol, inv, approvals, bench, freeze]
 
 | # | 威胁 | 例子 | 控制措施 |
 |---|---|---|---|
-| T13 | 飞书身份被冒用 | 群里不是审批人的成员点了「批准」；伪造的卡片回调 | 白名单按 `open_id` 校验；服务端重新校验风险上限；按钮只带 `approval_id`，其余从 Postgres 读；回调签名校验由 SDK 完成【待验证：S7】 |
+| T13 | 飞书身份被冒用 | 群里不是审批人的成员点了「批准」；伪造的卡片回调 | 白名单按 `open_id` 校验；服务端重新校验风险上限；按钮只带 `approval_id`，其余从 Postgres 读；长连接下没有逐条签名，鉴权在连接这一层（S7 实测）——所以 app_secret 就等于"能收到这个应用所有点击"的权力，要和写凭证一样保管 |
 | T14 | 环境串用 | dev bot 连到了 prod 的数据库 | 两个应用、两份配置；卡片标题显示 `env_label`；prod 配置里的 `commands` 不含 bench |
 | T15 | 数据外流到飞书 | 审批卡片的参数、前置检查里带着索引名、主机名 | 和 T10 一样如实记录数据流向；卡片里只放摘要和 ID，不贴原始观测 |
 | T16 | 在手机上随手批准 | 没看清就点了 | 卡片内容和 `approvals show` 一致；high 风险默认不能在飞书批准；有效期照旧（默认 30 分钟） |
@@ -223,5 +224,5 @@ commands: [help, patrol, inv, approvals, bench, freeze]
 
 ## 来源与核实说明
 
-1. 飞书开放平台的行为全部来自记忆，未经实测，由 S7 验证后修正本篇里的【待验证】标记。
+1. 飞书开放平台的行为已由 S7（2026-11-20）实测；只剩发送消息的幂等去重没有测，标着【待验证】。
 2. 现有代码的调用点（`record_decision`、`resume_online`、`freeze`、`audit_events.seq`）已经在 2026-11-20 核对过。
