@@ -689,6 +689,41 @@ def chatops_notify(
     n.run_forever()
 
 
+@chatops_app.command("serve")
+def chatops_serve(
+    env_file: Annotated[
+        Path | None, typer.Option(help="凭证文件（KEY=VALUE），以文件为准覆盖已有环境变量（S7）")
+    ] = None,
+    config: Annotated[Path | None, typer.Option(help="chatops 配置；默认读 SENTINEL_CHATOPS_CONFIG")] = None,
+) -> None:
+    """飞书入口（09 §3）：长连接收卡片审批点击 + 同一进程里推送。固定指令在 D20 加。"""
+    import logging
+
+    from sentinel.chatops.approvals import ApprovalHandler
+    from sentinel.chatops.client import LarkFeishuClient
+    from sentinel.chatops.config import load_chatops_config, load_env_file
+    from sentinel.chatops.gateway import serve
+    from sentinel.chatops.notifier import Notifier
+    from sentinel.core.graph.run import resume_online
+    from sentinel.core.store import open_store
+    from sentinel.core.toolbackend import Mode
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    if env_file:
+        typer.echo(f"已从 {env_file} 读入：{', '.join(load_env_file(env_file))}")  # 只打印键名
+    cfg = load_chatops_config(config)
+    if not cfg.approvers:
+        typer.echo("提醒：approvers 为空，所有审批点击都会被拒绝（09 §5.1）", err=True)
+    store, rem = open_store(), _rem_store()
+    handler = ApprovalHandler(rem, store.append_audit, cfg, resume=lambda inv: resume_online(inv, Mode.LIVE))
+    notifier = Notifier(store, rem, LarkFeishuClient(cfg.domain), cfg)
+    typer.echo(
+        f"[{cfg.env_label}] 连接 {cfg.domain}；审批人 {len(cfg.approvers)} 个，飞书审批上限 {cfg.max_risk}；"
+        f"每 {cfg.poll_interval_s} 秒推送一次"
+    )
+    serve(handler, notifier)
+
+
 @mcp_app.command("serve")
 def mcp_serve(
     caller: Annotated[str, typer.Option("--as", help="调用方身份（config/governance.yaml 的 mcp.callers）")],
@@ -787,24 +822,26 @@ def approvals_show(approval_id: str) -> None:
 
 
 def _decide(approval_id: str, decision: Literal["approved", "rejected"], who: str, reason: str | None) -> None:
-    from sentinel.core.graph.remediate import record_decision
+    """CLI 的审批：和飞书共用 decide_approval（09 §5.2），CLI 没有风险上限，然后同步等调查恢复。"""
+    from sentinel.core.approval_view import decide_approval, resume_summary
     from sentinel.core.graph.run import resume_online
     from sentinel.core.store import open_store
     from sentinel.core.toolbackend import Mode
-    from sentinel.governance.remediation_store import DuplicateError
 
-    try:
-        plan = record_decision(_rem_store(), open_store().append_audit, approval_id, decision, f"human:{who}", reason)
-    except KeyError as e:
-        raise typer.BadParameter(str(e)) from e
-    except DuplicateError as e:
-        typer.echo(f"拒绝：{e}（一个审批只能决定一次）", err=True)
-        raise typer.Exit(1) from e
+    r = decide_approval(_rem_store(), open_store().append_audit, approval_id, decision, f"human:{who}", reason)
+    if r.outcome == "not_found":
+        raise typer.BadParameter(f"没有审批请求 {approval_id}")
+    if r.outcome == "duplicate":
+        prev = r.view.decision if r.view else None
+        by = f"已被 {prev.approver} {prev.decision}" if prev else "已经有决定"
+        typer.echo(f"拒绝：{approval_id} {by}（一个审批只能决定一次）", err=True)
+        raise typer.Exit(1)
+    assert r.view is not None  # decided 一定带着重新读出来的 view
+    plan = r.view.plan
     word = "批准" if decision == "approved" else "拒绝"
     typer.echo(f"已{word} {approval_id}（方案哈希 {plan.plan_hash[:16]}…），继续调查 {plan.investigation_id}")
     out = resume_online(plan.investigation_id, Mode.LIVE)
-    # 修好之后停在 confirm（interrupt）：图还没走到 report，状态里没有 status
-    status = "awaiting_confirmation" if "__interrupt__" in out else out.get("status")
+    status = resume_summary(out)  # type: ignore[arg-type]
     typer.echo(f"{plan.investigation_id}  状态 {status}  修复 {out.get('remediation')}")
     if status == "awaiting_confirmation":
         typer.echo(f"确认根因：sentinel investigations confirm {plan.investigation_id} --root-cause H1 --as <你的名字>")

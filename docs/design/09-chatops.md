@@ -68,7 +68,7 @@ flowchart LR
     PG -.执行器自己去读.-> X[执行器（不变）]
 ```
 
-`sentinel chatops serve` 在一个进程里同时跑 gateway 和 notifier（D20）；D18 先有只跑推送的 `sentinel chatops notify`。新模块是 `src/sentinel/chatops/`，和 `cli/`、`api/` 平级。`.importlinter` 增加一条规则：`sentinel.chatops` 不能 import `sentinel.exec`。
+`sentinel chatops serve` 在一个进程里同时跑 gateway 和 notifier：D18 先有只跑推送的 `sentinel chatops notify`；D19 有了 `serve`（卡片审批回调 + 推送），D20 再给它加上消息指令。新模块是 `src/sentinel/chatops/`，和 `cli/`、`api/` 平级。`.importlinter` 增加一条规则：`sentinel.chatops` 不能 import `sentinel.exec`。
 
 ## 4. 推送
 
@@ -121,7 +121,13 @@ flowchart LR
 4. **立刻**把卡片更新为"已批准，执行中"，然后在后台线程里调 `resume_online(...)`。原因是飞书的回调**超过约 3 秒就判定超时，而且不会重发**（S7 实测：2.5 秒正常，4 秒超时），而 `resume_online` 最多要阻塞 `EXEC_WAIT_S=300` 秒。
 5. 执行和验证的结果不在这里返回，由 notifier 按审计事件推送（`verify.passed` / `verify.failed`）。
 
-`approvals show` 的内容已经抽到 `core/approval_view.py`（D18），CLI 和审批卡片都用 `ApprovalView.lines()`，测试里逐行比对两边。放在 core 而不是 governance：要用 `packs_registry` 取动作规格，而 governance 会被执行器 import，执行器不能依赖 core。`_decide` 的抽取在 D19。
+`approvals show` 的内容已经抽到 `core/approval_view.py`（D18），CLI 和审批卡片都用 `ApprovalView.lines()`，测试里逐行比对两边。放在 core 而不是 governance：要用 `packs_registry` 取动作规格，而 governance 会被执行器 import，执行器不能依赖 core。
+
+D19 把 CLI `_decide` 里"查审批 → 校验 → `record_decision` → 处理重复"的部分也抽到了同一个文件：`decide_approval(..., max_risk=...)`。CLI 传 `high`（不设上限），飞书传配置里的上限；恢复调查留给调用方（CLI 同步等，飞书放后台线程）。实现时定下的三点：
+
+- **风险上限对「拒绝」也生效。** 高于上限的卡片本来就没有按钮，收到这样的点击只可能是伪造的，所以不区分批准还是拒绝。
+- **拒绝之后也要恢复调查**（和 CLI 一样），调查才会以"只出报告"结束，否则会一直停在审批节点。
+- **决定之后卡片不再带按钮**：无论在哪里决定的（CLI 或飞书），之后再渲染的审批卡片都显示"已批准 / 已拒绝（谁、什么时候）"。点击处理在 `chatops/approvals.py`（纯逻辑，用假数据测试），lark SDK 的拆装在 `chatops/gateway.py`。
 
 ### 5.3 固定指令
 

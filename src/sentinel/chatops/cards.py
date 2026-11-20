@@ -1,7 +1,7 @@
 """飞书卡片模板（09 §4.1、§4.3）：纯函数，输入契约模型和审计事件，输出卡片 JSON（消息卡片 1.0 结构）。
 
 负责：每种推送长什么样；审批卡片要不要放按钮。
-不负责：发送（client.py）；按钮被点之后做什么（D19）。
+不负责：发送（client.py）；按钮被点之后做什么（approvals.py）。
 
 两条规则：
 1. 审批卡片的正文就是 ApprovalView.lines()，和 `sentinel approvals show` 是同一份（09 §4.3）。
@@ -35,10 +35,18 @@ def _cli(cmd: str) -> dict[str, Any]:
     return _md(f"CLI：`{cmd}`")
 
 
-def approval_card(cfg: ChatopsConfig, v: ApprovalView) -> Card:
+def approval_card(cfg: ChatopsConfig, v: ApprovalView, note: str | None = None) -> Card:
+    """note：点击之后写在卡片底部的一句话（"已批准，执行中"之类）。只有 pending 的审批才有按钮。"""
     body = "\n".join(f"**{k}**：{val}" for k, val in v.lines())
     head = f"调查 `{v.plan.investigation_id}` · 集群 `{v.plan.target}` · 审批 `{v.request.id}` · 状态 {v.state}"
     elements: list[dict[str, Any]] = [_md(head), {"tag": "hr"}, _md(body), {"tag": "hr"}]
+    if v.decision is not None:
+        # 已经决定过：卡片原地更新成结果，按钮去掉，免得有人再点
+        d = v.decision
+        word = "已批准" if d.decision == "approved" else "已拒绝"
+        elements.append(_md(f"**{word}**（{d.approver}，{d.decided_at:%m-%d %H:%M:%S %Z}）{note or ''}"))
+        template = "green" if d.decision == "approved" else "grey"
+        return _card(cfg, f"{word}：{v.plan.action_id}", template, elements)
     if risk_allowed(v.spec.risk, cfg.max_risk):
         elements.append(
             {

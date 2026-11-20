@@ -282,10 +282,66 @@ def step9_curve_and_ablation() -> tuple[Status, str]:
     return Status.PASS, ""
 
 
+def step11_feishu_approval() -> tuple[Status, str]:
+    """回放 + 假飞书（golden-demo 第 11 步）：approval.requested → 审批卡片（内容和 approvals show 一致）→
+    白名单外的点击被拒绝 → 审批人点「批准」→ approval.decided（human:<名字>，reason 以 [feishu] 开头）
+    → action.executed → verify.passed → 推送结果卡片。"""
+    import tempfile
+
+    from tests.flows.test_remediation import GOOD, fixture, with_plan
+    from tests.harness import Harness
+
+    from sentinel.chatops.approvals import CHANNEL, ApprovalHandler, CardAction
+    from sentinel.chatops.config import ChatopsConfig
+    from sentinel.chatops.fake import FakeFeishuClient
+    from sentinel.chatops.notifier import Notifier
+    from sentinel.core.approval_view import load_approval_view
+
+    tmp = Path(tempfile.mkdtemp())
+    h = Harness(tmp, fixture(tmp), with_plan(GOOD), remediate=True)
+    cfg = ChatopsConfig(env_label="kind-dev", chat_id="oc_demo", approvers={"ou_approver": "approver"})
+    feishu = FakeFeishuClient()
+    n = Notifier(h.store, h.rem_store, feishu, cfg)
+    n.tick()  # 初始化游标：只推之后发生的事
+    s = h.run("remediate")
+    n.tick()
+    cards = [c for _, c, _ in feishu.sent if "待审批" in c["header"]["title"]["content"]]
+    if not cards or not s.get("approval_id"):
+        return Status.FAIL, f"没有推送审批卡片：{[c['header']['title']['content'] for _, c, _ in feishu.sent]}"
+    title = cards[0]["header"]["title"]["content"]
+    text = "\n".join(e.get("content", "") for e in cards[0]["elements"])  # 卡片里的 markdown 正文
+    v = load_approval_view(h.rem_store, s["approval_id"])
+    assert v is not None
+    if not title.startswith("[kind-dev]") or any(val not in text for _, val in v.lines()):
+        return Status.FAIL, "审批卡片缺环境标签，或者内容和 approvals show 不一致"
+    gw = ApprovalHandler(h.rem_store, h.store.append_audit, cfg, resume=h.resume, spawn=lambda fn: fn())
+    value = {"approval_id": s["approval_id"], "decision": "approved"}
+    if gw.on_card_action(CardAction("ou_stranger", "oc_demo", "om_0", value)).toast_type != "error":
+        return Status.FAIL, "白名单外的点击没有被拒绝"
+    reply = gw.on_card_action(CardAction("ou_approver", "oc_demo", "om_0", value))
+    if reply.card is None or "执行中" not in str(reply.card):
+        return Status.FAIL, f"点击之后卡片没有变成「已批准，执行中」：{reply.toast}"
+    ev = h.store.audit_events(s["inv_id"])
+    types = [e.type for e in ev]
+    try:
+        ok = types.index("approval.decided") < types.index("action.executed") < types.index("verify.passed")
+    except ValueError:
+        return Status.FAIL, f"审计里缺少事件：{types}"
+    decided = [e for e in ev if e.type == "approval.decided"]
+    if not ok or len(decided) != 1:
+        return Status.FAIL, f"顺序不对或者决定了不止一次：{types}"
+    d = decided[0]
+    if d.actor != "human:approver" or not str(d.payload.get("reason", "")).startswith(CHANNEL):
+        return Status.FAIL, f"approval.decided 的 actor/reason 不对：{d.actor} {d.payload.get('reason')}"
+    n.tick()
+    if not any("验证通过" in c["header"]["title"]["content"] for _, c, _ in feishu.sent):
+        return Status.FAIL, "没有推送验证通过的卡片"
+    return Status.PASS, ""
+
+
 SCENARIO = Path(__file__).resolve().parents[1] / "src/sentinel/packs/es/scenarios/disk_watermark.single.yaml"
 
 # 步骤编号 → 检查函数。实现某一步的那天，在这里换成真正的检查。
-# 第 11 步（飞书审批）在 M5 D19 实现
 CHECKS: dict[int, Callable[[], tuple[Status, str]]] = {n: _not_implemented for n in range(1, 12)}
 CHECKS[1] = step1_patrol_healthy
 CHECKS[2] = step2_inject
@@ -297,6 +353,7 @@ CHECKS[7] = step7_confirm_memorize
 CHECKS[8] = step8_memory_reused
 CHECKS[9] = step9_curve_and_ablation
 CHECKS[10] = step10_report_and_audit
+CHECKS[11] = step11_feishu_approval
 
 
 def run(force_all: bool) -> int:
