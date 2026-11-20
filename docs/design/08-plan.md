@@ -281,7 +281,7 @@ docs/design/03-contracts.md、08-plan.md 中本里程碑的任务和验收、gol
 | M1 | 4 | 1（2026-11-10，Claude Code 会话约 3 小时） | 编码由 Claude Code 完成，按会话墙钟时间计；负责人审阅和决策的时间未计入。详见 docs/reports/M1-report.md |
 | M2 | 5 | | |
 | M3 | 3 | | |
-| M4 | 4 | | |
+| M4 | 4 | 日历上 3 天：11-11（D13–D14）、11-19（S6）、11-20（D15–D16 和收尾）；会话墙钟时间没有统计 | D15–D16 有约 1 小时花在账号限制上（区域 SCP、免费套餐），见 docs/reports/M4-report.md |
 
 ## 来源与核实说明
 

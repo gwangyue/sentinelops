@@ -60,6 +60,8 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata: { name: sentinel-exec-env, namespace: sentinel-exec }
+# TODO(edge): 执行器和 agent 用同一个 postgres 超级用户。01 §6 要求执行器只能读审批、写审计；现在它能写
+# approval_decisions（07 §3 T3「审批只能由人写入」靠的是代码，不是数据库权限）。要补就建一个专用角色（M4 独立审阅发现 2）
 stringData:
   SENTINEL_PG_URL: {{ $pgUrl | quote }}
   SENTINEL_CRED_ES_EXECUTOR_URL: {{ printf "https://%s:9200" .Values.esTarget.agentHost | quote }}

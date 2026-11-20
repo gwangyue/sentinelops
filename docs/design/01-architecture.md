@@ -292,9 +292,11 @@ kind 默认的网络插件 kindnet（kind v0.33）**会执行** NetworkPolicy（
 |---|---|---|---|---|---|
 | 诊断 Agent（运行在 agent-api 里） | **只读**：cluster `monitor`；indices `*` 的 `monitor`、`view_index_metadata`（S1 实测：10 个只读 API 都够用；读不到文档内容。M2 D6 实测：`_index_template`、`_nodes` 可读；`_ilm/policy` 返回 403，按决定不加权限，ILM 不进 L3 变更层） | **只读**：`PROCESS`、读取 `performance_schema` | 读写 | 读 | Gemini、LangSmith |
 | 记忆写入（agent-api，人确认之后） | — | — | 读写 | **写** | — |
-| 执行器 | **只有动作目录需要的那些写权限**。MySQL（M4 D13 实测）：只有 `SYSTEM_VARIABLES_ADMIN`，读不到、改不了业务表，不能删库建用户；**但这个权限不能限定到单个变量，也能改 `read_only`**，动作目录里没有这个动作，靠执行器只按规格执行来约束。ES（M3 D10 实测）：cluster `monitor`、`cluster:admin/settings/update`、`cluster:admin/reroute`；indices `*` 的 `monitor`、`view_index_metadata`、`indices:admin/settings/update`。**不用 `manage`**：索引级的 `manage` 包含删除索引。实测：删除索引、读写文档、建索引、快照仓库、改角色都返回 403 | 同左 | 读审批、写审计 | — | **禁止** |
+| 执行器 | **只有动作目录需要的那些写权限**。MySQL（M4 D13 实测）：只有 `SYSTEM_VARIABLES_ADMIN`，读不到、改不了业务表，不能删库建用户；**但这个权限不能限定到单个变量，也能改 `read_only`**，动作目录里没有这个动作，靠执行器只按规格执行来约束。ES（M3 D10 实测）：cluster `monitor`、`cluster:admin/settings/update`、`cluster:admin/reroute`；indices `*` 的 `monitor`、`view_index_metadata`、`indices:admin/settings/update`。**不用 `manage`**：索引级的 `manage` 包含删除索引。实测：删除索引、读写文档、建索引、快照仓库、改角色都返回 403 | 同左 | 读审批、写审计（**现状偏差**：kind 和 chart 里执行器用的是和 Agent 相同的超级用户，T3 靠代码保证，不靠数据库权限；M4 独立审阅发现 2，`TODO(edge)`） | — | **禁止** |
 | 评测运行器 | 回放模式下不访问 | 同左 | 读写 | 读写（消融实验用单独的索引） | Gemini、LangSmith |
 | 外部 Agent（经 MCP） | 只读工具的一个子集 | 同左 | — | — | — |
+
+执行器的"外网：禁止"由 sentinel-exec 的 NetworkPolicy 落实（`exec-isolation`，M4 独立审阅补上；kind 实测生效后外网不通）。新 Pod 启动的头几秒策略还没生效，EKS 上要彻底关掉这个窗口得打开 VPC CNI 的 strict 模式（`TODO(edge)`）。
 
 ## 7. L5 技术选型
 

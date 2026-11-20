@@ -1,4 +1,5 @@
-# 01 §5.1 的入站策略（D1 先做 targets 和 sentinel-data 两条；sentinel-exec 的出入站在 M3 执行器上线时补）
+# 01 §5.1 的网络策略：targets、sentinel-data 的入站，sentinel-exec 的出入站（M4 独立审阅补上）。
+# kind 上执行器在本机运行（deploy/kind/exec-env.sh），sentinel-exec 这条在集群里跑执行器时才起作用；和 chart 保持一致
 # 都要放行 elastic-system（ECK operator 要连 ES 才能管理集群）和本命名空间内部（ES 节点之间的 9300 流量）
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -26,3 +27,24 @@ spec:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-exec } }
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: elastic-system } }
         - podSelector: {}
+---
+# sentinel-exec（01 §5.1、ADR-005、07 §3 T6）：持有写凭证的执行器不能访问外网。
+# 入站：执行器不监听端口，全部拒绝。出站：只到被管系统（targets）、Postgres（读审批、写审计）和 DNS。
+# M4 独立审阅发现：M3 起一直写着"以后补"，chart 照搬了缺口；EKS 上有 NAT 出口，没有这条就等于能上外网
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: exec-isolation, namespace: sentinel-exec }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: targets } }
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-data } }
+          podSelector: { matchLabels: { app: postgres } }
+      ports: [{ port: 5432, protocol: TCP }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]

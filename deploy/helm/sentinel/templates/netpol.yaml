@@ -29,3 +29,26 @@ spec:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-exec } }
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: elastic-system } }
         - podSelector: {}
+---
+# sentinel-exec（01 §5.1、ADR-005、07 §3 T6）：持有写凭证的执行器不能访问外网。
+# 入站：执行器不监听端口，全部拒绝。出站：只到被管系统（targets）、Postgres（读审批、写审计）和 DNS。
+# M4 独立审阅发现：M3 起一直写着"以后补"，chart 照搬了缺口；EKS 上有 NAT 出口，没有这条就等于能上外网。
+# kind 上实测：生效后外网不通、targets 能通、es-memory 不通。
+# TODO(edge): 新 Pod 启动的头几秒策略还没生效，外网是通的（kind 实测）；EKS 上要关掉这个窗口得打开 VPC CNI 的 strict 模式
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: exec-isolation, namespace: sentinel-exec }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: targets } }
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sentinel-data } }
+          podSelector: { matchLabels: { app: postgres } }
+      ports: [{ port: 5432, protocol: TCP }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
