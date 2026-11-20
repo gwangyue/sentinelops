@@ -36,6 +36,8 @@ app.add_typer(approvals_app, name="approvals")
 report_app = typer.Typer(no_args_is_help=True, help="治理周报（07 §8）")
 app.add_typer(report_app, name="report")
 mcp_app = typer.Typer(no_args_is_help=True, help="外部 Agent 的 MCP 只读服务（02 §8）")
+chatops_app = typer.Typer(no_args_is_help=True, help="飞书 ChatOps（09 篇）")
+app.add_typer(chatops_app, name="chatops")
 app.add_typer(mcp_app, name="mcp")
 audit_app = typer.Typer(no_args_is_help=True, help="审计（07 §5）")
 app.add_typer(audit_app, name="audit")
@@ -658,6 +660,35 @@ def report_weekly(
         typer.echo(f"  - {item}")
 
 
+@chatops_app.command("notify")
+def chatops_notify(
+    env_file: Annotated[
+        Path | None, typer.Option(help="凭证文件（KEY=VALUE），以文件为准覆盖已有环境变量（S7）")
+    ] = None,
+    config: Annotated[Path | None, typer.Option(help="chatops 配置；默认读 SENTINEL_CHATOPS_CONFIG")] = None,
+    once: Annotated[bool, typer.Option(help="只处理一批就退出（调试用）")] = False,
+) -> None:
+    """推送（09 §4）：按游标读审计表，把待审批、异常、升级、验证结果、冻结推到飞书群。"""
+    import logging
+
+    from sentinel.chatops.client import LarkFeishuClient
+    from sentinel.chatops.config import load_chatops_config, load_env_file
+    from sentinel.chatops.notifier import Notifier
+    from sentinel.core.store import open_store
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    if env_file:
+        typer.echo(f"已从 {env_file} 读入：{', '.join(load_env_file(env_file))}")  # 只打印键名
+    cfg = load_chatops_config(config)
+    n = Notifier(open_store(), _rem_store(), LarkFeishuClient(cfg.domain), cfg)
+    typer.echo(f"[{cfg.env_label}] 推送到 {cfg.domain}，每 {cfg.poll_interval_s} 秒读一次审计表")
+    if once:
+        # 第一次运行只会初始化游标；再跑一次才会真正推送
+        typer.echo(f"本轮发出 {n.tick()} 张卡片；游标 {n.store.get_notify_cursor(cfg.env_label)}")
+        return
+    n.run_forever()
+
+
 @mcp_app.command("serve")
 def mcp_serve(
     caller: Annotated[str, typer.Option("--as", help="调用方身份（config/governance.yaml 的 mcp.callers）")],
@@ -743,26 +774,16 @@ def approvals_list() -> None:
 
 @approvals_app.command("show")
 def approvals_show(approval_id: str) -> None:
-    """审批人要看的全部内容（02 §3.3）：动作、参数、前置检查、预演、回滚、验证条件、有效期、方案哈希。"""
-    from sentinel.core.packs_registry import load_pack
+    """审批人要看的全部内容（02 §3.3）。和飞书审批卡片共用 core/approval_view.py，两边内容一致（09 §4.3）。"""
+    from sentinel.core.approval_view import load_approval_view
 
-    st = _rem_store()
-    r = st.get_approval_request(approval_id)
-    plan = st.get_plan(r.plan_id) if r else None
-    if r is None or plan is None:
+    v = load_approval_view(_rem_store(), approval_id)
+    if v is None:
         raise typer.BadParameter(f"没有审批请求 {approval_id}")
-    # 动作 ID 的前缀就是专家包名（<pack>.<动词_宾语>，03 §2）
-    spec = load_pack(plan.action_id.split(".", 1)[0]).actions[plan.action_id]
-    d = st.get_decision(r.id)
-    typer.echo(f"审批 {r.id}   调查 {plan.investigation_id}   状态 {d.decision if d else 'pending'}")
-    typer.echo(f"  动作      {plan.action_id}（风险：{spec.risk}，依据 {plan.rationale_hypothesis}）")
-    typer.echo(f"  参数      {json.dumps(plan.params, ensure_ascii=False)}")
-    typer.echo(f"  前置检查  {json.dumps(plan.precheck_snapshot, ensure_ascii=False)}")
-    typer.echo(f"  预演      {json.dumps(plan.dry_run_result, ensure_ascii=False)}  上限 {spec.max_blast_radius}")
-    typer.echo(f"  回滚      {plan.rollback_plan}")
-    typer.echo(f"  验证条件  {spec.verify.predicate.split(':')[-1]}，{spec.verify.timeout_s} 秒内达成")
-    typer.echo(f"  有效期    至 {r.expires_at:%Y-%m-%d %H:%M:%S %Z}")
-    typer.echo(f"  方案哈希  {plan.plan_hash}")
+    typer.echo(f"审批 {v.request.id}   调查 {v.plan.investigation_id}   状态 {v.state}")
+    for label, value in v.lines():
+        # 中文标签按 4 个字宽对齐（一个汉字占两个空格宽），和原来的输出逐字节一致
+        typer.echo(f"  {label}{' ' * (2 * (4 - len(label)))}  {value}")
 
 
 def _decide(approval_id: str, decision: Literal["approved", "rejected"], who: str, reason: str | None) -> None:

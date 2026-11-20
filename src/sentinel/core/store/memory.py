@@ -1,6 +1,7 @@
 """内存实现：只给测试用（测试禁用网络，连不上 Postgres）。行为和 PgStore 保持一致。"""
 
 import dataclasses
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any
 
@@ -16,6 +17,7 @@ class MemoryStore:
         self.versions: list[AgentVersion] = []
         self.obs: list[Observation] = []
         self.snapshots: dict[tuple[str, str], tuple[Any, datetime]] = {}
+        self.cursors: dict[str, int] = {}
 
     def init(self) -> None:
         pass
@@ -63,6 +65,22 @@ class MemoryStore:
 
     def audit_events(self, investigation_id: str | None = None) -> list[AuditEvent]:
         return [e for e in self.audit if investigation_id is None or e.investigation_id == investigation_id]
+
+    # seq 就是在列表里的位置 + 1，和 Postgres 的 bigserial 一样从 1 开始、单调递增
+    def audit_events_since(
+        self, after_seq: int, types: Collection[str], limit: int = 100
+    ) -> list[tuple[int, AuditEvent]]:
+        rows = [(i + 1, e) for i, e in enumerate(self.audit) if i + 1 > after_seq and e.type in types]
+        return rows[:limit]
+
+    def latest_audit_seq(self) -> int:
+        return len(self.audit)
+
+    def get_notify_cursor(self, env: str) -> int | None:
+        return self.cursors.get(env)
+
+    def set_notify_cursor(self, env: str, seq: int) -> None:
+        self.cursors[env] = seq
 
     def get_version(self, hash_or_seq: str) -> AgentVersion | None:
         return next((v for v in self.versions if hash_or_seq in (v.hash, f"v{v.seq}", str(v.seq))), None)

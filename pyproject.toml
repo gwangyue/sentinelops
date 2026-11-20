@@ -22,6 +22,7 @@ dependencies = [
     "jsonschema>=4.26.0",
     "pymysql>=1.2.3",
     "mcp>=2.3.0",
+    "lark-oapi>=1.7.5",
 ]
 
 [project.scripts]
@@ -69,6 +70,11 @@ python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+# 飞书官方 SDK 没有类型标注（没有 py.typed）。只在 chatops/client.py 里用，返回值都转成 str 再往外传
+module = ["lark_oapi", "lark_oapi.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

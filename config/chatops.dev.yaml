@@ -1,0 +1,12 @@
+# 飞书 ChatOps，dev 环境（kind；09 §6、§7）。用 SENTINEL_CHATOPS_CONFIG 选择，不设时默认用这份。
+# 凭证不写在这里：FEISHU_APP_ID / FEISHU_APP_SECRET（和 FEISHU_CHAT_ID）放在本机文件里，
+#   sentinel chatops notify --env-file ~/.config/sentinelops/feishu-dev.env
+env_label: kind-dev              # 每张卡片标题上的环境标签
+domain: https://open.feishu.cn   # 国内飞书（S7）；Lark 国际版是 https://open.larksuite.com
+chat_id: null                    # null：读 FEISHU_CHAT_ID（群 ID 不进仓库）
+approvers: {}                    # open_id → 名字，D19 填；open_id 按应用区分，dev 和 prod 各写各的
+approval:
+  max_risk_via_chat: medium      # 09 §2 D3：low | medium | high
+high_risk_enabled: false         # true：飞书能审批 high，也能 /freeze（09 §2 D4）
+commands: [help, patrol, inv, approvals, bench, freeze]
+poll_interval_s: 5

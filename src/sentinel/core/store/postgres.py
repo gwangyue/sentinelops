@@ -5,6 +5,7 @@
 
 import dataclasses
 import json
+from collections.abc import Collection
 from datetime import datetime
 from importlib.resources import files
 from typing import Any
@@ -99,6 +100,34 @@ class PgStore:
                     "SELECT * FROM audit_events WHERE investigation_id = %s ORDER BY seq", (investigation_id,)
                 ).fetchall()
         return [_audit(r) for r in rows]
+
+    def audit_events_since(
+        self, after_seq: int, types: Collection[str], limit: int = 100
+    ) -> list[tuple[int, AuditEvent]]:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM audit_events WHERE seq > %s AND type = ANY(%s) ORDER BY seq LIMIT %s",
+                (after_seq, list(types), limit),
+            ).fetchall()
+        return [(r["seq"], _audit(r)) for r in rows]
+
+    def latest_audit_seq(self) -> int:
+        with self._conn() as c:
+            row = c.execute("SELECT coalesce(max(seq), 0) AS s FROM audit_events").fetchone()
+        return int(row["s"]) if row else 0
+
+    def get_notify_cursor(self, env: str) -> int | None:
+        with self._conn() as c:
+            row = c.execute("SELECT last_seq FROM notify_cursor WHERE env = %s", (env,)).fetchone()
+        return int(row["last_seq"]) if row else None
+
+    def set_notify_cursor(self, env: str, seq: int) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO notify_cursor (env, last_seq) VALUES (%s, %s) "
+                "ON CONFLICT (env) DO UPDATE SET last_seq = excluded.last_seq, updated_at = now()",
+                (env, seq),
+            )
 
     # ---------- 版本 ----------
     def get_version(self, hash_or_seq: str) -> AgentVersion | None:

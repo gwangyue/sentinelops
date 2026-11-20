@@ -1,0 +1,11 @@
+# 飞书 ChatOps，prod 环境（EKS 悉尼；09 §6、§7）。另一个飞书应用、另一个群。
+# 凭证由 k8s secret sentinel-feishu 注入为环境变量（aws-up.sh 创建，D21）。
+env_label: eks-prod
+domain: https://open.feishu.cn
+chat_id: null
+approvers: {}
+approval:
+  max_risk_via_chat: medium
+high_risk_enabled: false
+commands: [help, patrol, inv, approvals, freeze]   # 没有 bench（09 §2 D2：注入故障只在 dev）
+poll_interval_s: 5

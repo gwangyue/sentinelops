@@ -68,7 +68,7 @@ flowchart LR
     PG -.执行器自己去读.-> X[执行器（不变）]
 ```
 
-`sentinel chatops serve` 在一个进程里同时跑 gateway 和 notifier。新模块是 `src/sentinel/chatops/`，和 `cli/`、`api/` 平级。`.importlinter` 增加一条规则：`sentinel.chatops` 不能 import `sentinel.exec`。
+`sentinel chatops serve` 在一个进程里同时跑 gateway 和 notifier（D20）；D18 先有只跑推送的 `sentinel chatops notify`。新模块是 `src/sentinel/chatops/`，和 `cli/`、`api/` 平级。`.importlinter` 增加一条规则：`sentinel.chatops` 不能 import `sentinel.exec`。
 
 ## 4. 推送
 
@@ -87,9 +87,10 @@ flowchart LR
 ### 4.2 outbox 游标
 
 - `audit_events.seq` 是 bigserial，追加时整表加锁（`governance/audit.py` 的 `pg_append`），所以 `WHERE seq > :cursor ORDER BY seq` 不会漏掉事件，也不会读乱顺序。
-- 新增存储接口 `Store.audit_events_since(seq, types)`，实现在 `core/store/{base,postgres,memory}.py`。这是存储接口，**不是契约**。
+- 新增存储接口 `Store.audit_events_since(after_seq, types)`，实现在 `core/store/{base,postgres,memory}.py`。这是存储接口，**不是契约**。`AuditEvent` 契约里没有 `seq`，所以返回 `(seq, 事件)` 二元组，契约不动。
+- 第一次启动（这个环境还没有游标）时，游标从当前最新的 seq 开始，不补发历史事件。
 - 新增迁移 `004_chatops.sql`：`notify_cursor(env text primary key, last_seq bigint)`。
-- 发送成功之后才推进游标（至少一次投递）。同一事件重复推送时，卡片带上事件 ID，用发送消息接口的幂等字段去重【待验证：S7 没测，D18 实测】。
+- 发送成功之后才推进游标（至少一次投递）。同一事件重复推送时，卡片带上事件 ID，用发送消息接口的 `uuid` 字段去重（D18 实测：同一个 uuid 发两次，返回同一个 message_id）。
 - 推送失败只记日志、退避重试，**不写审计、不影响调查**。
 - TODO(edge)：长时间停机后积压了大量事件时，要合并成一张汇总卡片。
 
@@ -120,7 +121,7 @@ flowchart LR
 4. **立刻**把卡片更新为"已批准，执行中"，然后在后台线程里调 `resume_online(...)`。原因是飞书的回调**超过约 3 秒就判定超时，而且不会重发**（S7 实测：2.5 秒正常，4 秒超时），而 `resume_online` 最多要阻塞 `EXEC_WAIT_S=300` 秒。
 5. 执行和验证的结果不在这里返回，由 notifier 按审计事件推送（`verify.passed` / `verify.failed`）。
 
-CLI 的 `_decide` 和 `approvals show` 里的逻辑要抽到一个共用的函数里，CLI 和 chatops 都调它，避免同一套规则写两份。
+`approvals show` 的内容已经抽到 `core/approval_view.py`（D18），CLI 和审批卡片都用 `ApprovalView.lines()`，测试里逐行比对两边。放在 core 而不是 governance：要用 `packs_registry` 取动作规格，而 governance 会被执行器 import，执行器不能依赖 core。`_decide` 的抽取在 D19。
 
 ### 5.3 固定指令
 
@@ -224,5 +225,5 @@ commands: [help, patrol, inv, approvals, bench, freeze]
 
 ## 来源与核实说明
 
-1. 飞书开放平台的行为已由 S7（2026-11-20）实测；只剩发送消息的幂等去重没有测，标着【待验证】。
+1. 飞书开放平台的行为已由 S7 和 D18（2026-11-20）实测。
 2. 现有代码的调用点（`record_decision`、`resume_online`、`freeze`、`audit_events.seq`）已经在 2026-11-20 核对过。

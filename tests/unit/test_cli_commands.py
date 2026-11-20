@@ -29,6 +29,7 @@ EXPECTED = {
     ("approvals", "show"),
     ("approvals", "approve"),
     ("approvals", "reject"),
+    ("chatops", "notify"),
 }
 
 

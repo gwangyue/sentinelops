@@ -16,6 +16,7 @@ forbidden_modules =
     sentinel.api
     sentinel.cli
     sentinel.mcp
+    sentinel.chatops
 
 [importlinter:contract:sdk-only-contracts]
 name = sdk 只依赖 contracts
@@ -30,6 +31,7 @@ forbidden_modules =
     sentinel.api
     sentinel.cli
     sentinel.mcp
+    sentinel.chatops
 
 [importlinter:contract:packs-only-contracts-sdk]
 name = packs 只依赖 contracts 和 sdk
@@ -43,6 +45,7 @@ forbidden_modules =
     sentinel.api
     sentinel.cli
     sentinel.mcp
+    sentinel.chatops
 
 [importlinter:contract:core-no-packs]
 name = core 不能 import 具体的专家包（通过注册表在运行时加载）
@@ -75,3 +78,19 @@ forbidden_modules =
     sentinel.core.versioning
 # 经过 sentinel.core.api 的间接引用是允许的：这正是"公开接口"的意思
 allow_indirect_imports = True
+
+[importlinter:contract:chatops-no-exec]
+name = chatops 不 import 执行器（09 §3：飞书只是 CLI 的另一个入口，写操作仍然只经过 审批记录 → 独立执行器）
+type = forbidden
+source_modules = sentinel.chatops
+forbidden_modules = sentinel.exec
+
+[importlinter:contract:lower-layers-no-chatops]
+name = core / governance / exec / eval 不依赖 chatops（推送读审计表，图的节点不调用飞书，09 §3）
+type = forbidden
+source_modules =
+    sentinel.core
+    sentinel.governance
+    sentinel.exec
+    sentinel.eval
+forbidden_modules = sentinel.chatops

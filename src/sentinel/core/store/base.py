@@ -4,6 +4,7 @@
 不负责：checkpoint（LangGraph 的 PostgresSaver 自己管）、原始观测输出（文件，见 core/observations）。
 """
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
@@ -57,6 +58,16 @@ class Store(Protocol):
         payload: dict[str, Any],
     ) -> AuditEvent: ...
     def audit_events(self, investigation_id: str | None = None) -> list[AuditEvent]: ...
+    # 推送用的增量读取（09 §4.2）。AuditEvent 契约里没有 seq，所以返回 (seq, 事件)，不改契约。
+    # seq 单调递增、追加时整表加锁，按 seq 读不会漏、不会乱序
+    def audit_events_since(
+        self, after_seq: int, types: Collection[str], limit: int = 100
+    ) -> list[tuple[int, AuditEvent]]: ...
+    def latest_audit_seq(self) -> int: ...
+
+    # 推送游标：每个环境一行（09 §4.2）。None 表示这个环境还没推过
+    def get_notify_cursor(self, env: str) -> int | None: ...
+    def set_notify_cursor(self, env: str, seq: int) -> None: ...
 
     # Agent 版本
     def get_version(self, hash_or_seq: str) -> AgentVersion | None: ...
