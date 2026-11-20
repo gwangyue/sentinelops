@@ -42,5 +42,5 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：**M4 完成**（tag `m4`，报告 docs/reports/M4-report.md、代码导览 M4-code-tour.md）。08 的四个里程碑全部结束。M4：D13 通用化（tag `m4-base`）+ MySQL 专家包；D14 周报、MCP；D15–D16 EKS 悉尼（组织 SCP 只放开 ap-southeast-2，账号是免费套餐、节点 m7i-flex.large；`make aws-up / aws-patrol / aws-down`）。零改动验收有 5 条例外（见 M4 报告 §3）。缺口：漂移检查（M2–M4 都没做）、v42 未评测（上线版本仍是 v41）。待你决定：v42 评测、控制台访问条目、免费套餐（M4 报告 §9）
+- 里程碑：**M4 完成**（tag `m4`，报告 docs/reports/M4-report.md、代码导览 M4-code-tour.md）。08 的四个里程碑全部结束。M4：D13 通用化（tag `m4-base`）+ MySQL 专家包；D14 周报、MCP；D15–D16 EKS 悉尼（组织 SCP 只放开 ap-southeast-2，账号是免费套餐、节点 m7i-flex.large；`make aws-up / aws-patrol / aws-down`）。零改动验收有 5 条例外（见 M4 报告 §3）。缺口：漂移检查（M2–M4 都没做）。已决定（11-20）：v42 不评测，上线版本仍是 v41；AWS 保持免费套餐。待决定：控制台访问条目（M4 报告 §9）
 - 最新版本：v41（L3 开，L4、L5 不上线；es + mysql 两个专家包）· 数据集标签：es `ds-20261111-1`（17 个场景 34 条）、mysql `ds-20261111-2`（3 个场景 6 条）· 事故流：datasets/streams/es.yaml
