@@ -191,3 +191,22 @@ def test_env_file_overrides_stale_env(tmp_path: Path, monkeypatch: pytest.Monkey
     assert load_env_file(f) == ["FEISHU_APP_ID", "FEISHU_CHAT_ID"]
     assert os.environ["FEISHU_APP_ID"] == "cli_new"
     assert ChatopsConfig(env_label="x").resolved_chat_id() == "oc_x"
+
+
+def test_run_forever_survives_a_failed_round_and_catches_up() -> None:
+    # M5 独立审阅发现 1：Postgres 抖一下不能让 notifier 线程永久退出；恢复之后从游标处补发
+    store, _, client, n = _setup()
+    n.tick()  # 初始化游标
+    _audit(store, "investigation.escalated", {"reason": "x"})
+    real = store.audit_events_since
+    calls = {"n": 0}
+
+    def flaky(after: int, types: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("postgres 重启中")
+        return real(after, types)
+
+    store.audit_events_since = flaky  # type: ignore[method-assign]
+    n.run_forever(sleep=lambda s: None, rounds=2)
+    assert calls["n"] == 2 and len(client.sent) == 1

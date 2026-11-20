@@ -83,7 +83,9 @@ def serve(handler: ApprovalHandler, commands: CommandHandler, notifier: Notifier
         .register_p2_im_message_receive_v1(_on_message(commands))
         .build()
     )
-    # TODO(edge)：长连接断开的重连交给 SDK（它自带重连）；notifier 线程异常退出时整个进程不会跟着退出
+    # TODO(edge)：长连接断开的重连交给 SDK（它自带重连）。
+    # notifier 每轮的异常已经在 run_forever 里兜住（M5 独立审阅发现 1）；
+    # 线程本身被杀掉这种情况，整个进程不会跟着退出，chatops 也没有存活探针
     lark.ws.Client(
         os.environ["FEISHU_APP_ID"],
         os.environ["FEISHU_APP_SECRET"],

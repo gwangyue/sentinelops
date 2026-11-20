@@ -78,7 +78,16 @@ class Notifier:
         # TODO(edge)：长时间停机积压大量事件时合并成一张汇总卡片（09 §4.2）；现在每轮最多 100 条，逐条发
         return sent
 
-    def run_forever(self, sleep: Callable[[float], None] = time.sleep) -> None:
-        while True:
-            self.tick()
+    def run_forever(self, sleep: Callable[[float], None] = time.sleep, rounds: int | None = None) -> None:
+        """rounds：只跑几轮就返回（测试用）；None 表示一直跑。"""
+        n = 0
+        while rounds is None or n < rounds:
+            n += 1
+            try:
+                self.tick()
+            except Exception:
+                # M5 独立审阅发现 1：tick 里读游标、读审计表、渲染卡片的异常（Postgres 重启、专家包里删了动作）
+                # 以前会让 notifier 线程永久退出，长连接照常在线、从外面看不出来。现在记日志，下一轮重试；
+                # 游标没推进，恢复之后从原处补发（09 §4.2、§12 第 2 问）
+                log.exception("推送这一轮失败，%s 秒后重试", self.cfg.poll_interval_s)
             sleep(self.cfg.poll_interval_s)

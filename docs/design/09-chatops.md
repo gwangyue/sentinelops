@@ -218,6 +218,10 @@ commands: [help, patrol, inv, approvals, bench, freeze]
 - **kind 手动验证**（dev bot）：`/help` → `/bench inject <场景>` → 收到异常卡片和审批卡片 → 点批准 → 收到 verify.passed；开关关闭时 `/freeze` 被拒绝。
 - **kind 实测（D20，2026-11-20）**：上面这条链路用 dev bot 跑通，审计 `approval.decided`（actor `human:yuewang`，reason `[feishu]`）→ `action.executed`（executor，哈希一致）→ `verify.passed`，从批准到验证通过 2 秒。跑之前要注意两件事：① serve 的 shell 要先 source 只读凭证（`dev-env.sh`；巡检 mysql-target 还要 `mysql-env.sh`，没 source 时巡检会失败，调查会停在 running，TODO(edge)），执行器在另一个 shell 用 `exec-env.sh`；② 版本哈希包含整个 `src/`，chatops 的代码改动也会让当前代码没有对应版本，真实巡检会被拒绝。M5 的处理办法：冻结一个"行为不变"的版本（v43，不评测，上线版本仍是 v41），和 v38–v41 的先例一样。
 - **EKS 只跑一次**：prod bot 跑 `/patrol` 和一次审批，然后 `make aws-down`。
+- **EKS 实测（D21，2026-11-20）**：prod bot 在 EKS 悉尼跑通。注入 `allocation_disabled` → 值班群 @ 机器人 `/help` → 点「巡检 es-target」→ 审批卡片「批准」→ verify.passed。云上审计（版本 v1，对应提交 5240166）依次是：`approval.requested` → `approval.decided`（`human:yuewang`，reason `[feishu]`）→ `action.executed`（executor，哈希一致）→ `verify.passed`（`unassigned_shards=0 status=green`），从批准到验证通过 11 秒。实测发现三点：
+  1. **prod 群里的指令要真的 @ 机器人**（从 @ 列表里选，显示成蓝色）。prod 应用只开了"获取群组中其他机器人和用户@当前机器人的消息"，没开敏感权限"获取群组中所有消息"。不 @ 的消息、手打成纯文本的 @，飞书**根本不生成事件**（事件日志里查不到），从外面看就是"机器人不回话"。dev 应用开了后者，所以 dev 群不 @ 也能用。保持现状：值班群要求 @ 才触发，能防误触。帮助卡片上的按钮走卡片回调，不受影响。排查办法：开放平台「日志检索 → 事件日志」。查不到记录，说明消息没变成事件；记录是 `app not online`，说明当时没有长连接在线。
+  2. **云上没有 mysql-target**（chart 只部署了 es-target，见 values.yaml 的 TODO），但 `mcp.targets` 里有，所以帮助卡片上会出现「巡检 mysql-target」，点了会因为缺只读凭证而失败。TODO(edge)：帮助卡片只列出本环境有凭证的目标。
+  3. chatops Pod 第一次启动时 Postgres 还没就绪，会崩溃重启 2 次，之后自己恢复（和 D16 执行器一样）。TODO(edge)：像执行器那样加 initContainer 等库。
 
 ## 10. L5 判断
 
