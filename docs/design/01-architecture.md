@@ -190,7 +190,7 @@ sentinelops/
 | 形态 | 包含什么 | 用途 | 启动方式 |
 |---|---|---|---|
 | **A. 回放** | docker compose：postgres + es-memory；CLI 在本机运行 | 日常开发：改提示词、改上下文策略、跑评测 | `docker compose up` |
-| **B. 本地全链路** | kind 集群：所有组件 + es-target + mysql + Chaos Mesh | 录制新场景、端到端演示、联调执行器 | `make kind-up` |
+| **B. 本地全链路** | kind 集群：所有组件 + es-target + mysql + Chaos Mesh | 录制新场景、端到端演示、联调执行器 | `make kind-up`（Docker 重启后：`make kind-remount`） |
 | **C. AWS EKS** | 和 B 用同一套 Helm chart，只换 `values-aws.yaml` | 云上演示，证明能部署到云 | `terraform apply` 之后 `helm install` |
 
 **本地资源（S1 实测，见 spike-results.md）**：

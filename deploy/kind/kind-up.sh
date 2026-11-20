@@ -4,6 +4,7 @@
 #       es-target、es-memory、Postgres、只读用户、es-target 的种子数据。
 # 不负责：Agent 本身的部署（D3 起用 Helm chart）、MySQL（M4）、执行器的写账号（M3）。
 # 每一步先判断是否已经完成，完成了就跳过，所以可以重复执行。
+# Docker 重启之后只需要重新挂盘：deploy/kind/kind-up.sh remount-disks（make kind-remount）。
 set -euo pipefail
 
 CLUSTER=sentinel
@@ -31,11 +32,24 @@ step_cluster() {
   kubectl config get-contexts -o name | grep -qx "$CTX" || { echo "找不到 context $CTX" >&2; exit 1; }
 }
 
-step_disks() {
-  # 镜像文件放在节点容器的 /var 下，大小固定；挂载点 /mnt/esdata-N 对应 fixed-pv.yaml 里的路径。
-  # 节点容器重启后挂载会丢，但镜像文件还在：重跑时只重新挂载，不重新格式化，数据保留。
+# 盘的挂载（S2 的固定大小 loop 盘）。镜像文件放在节点容器的 /var 下，挂载点 /mnt/esdata-N 对应 fixed-pv.yaml。
+# 节点容器重启（Docker 重启、机器重启）之后挂载会丢，但镜像文件还在：只重新挂载，不重新格式化，数据保留。
+WORKERS() { kind get nodes --name "$CLUSTER" | grep worker | sort; }
+ES_TARGET_PODS=elasticsearch.k8s.elastic.co/cluster-name=es-target
+
+disks_missing() {
+  local node i
+  for node in $(WORKERS); do
+    for ((i = 0; i < DISKS_PER_WORKER; i++)); do
+      docker exec "$node" mountpoint -q "/mnt/esdata-$i" || return 0
+    done
+  done
+  return 1
+}
+
+mount_disks() {
   local node i img mnt
-  for node in $(kind get nodes --name "$CLUSTER" | grep worker | sort); do
+  for node in $(WORKERS); do
     for ((i = 0; i < DISKS_PER_WORKER; i++)); do
       img=/var/esdata-$i.img
       mnt=/mnt/esdata-$i
@@ -53,6 +67,48 @@ step_disks() {
       log "$node:$mnt 已挂载 $(docker exec "$node" findmnt -n -o SOURCE,SIZE "$mnt")"
     done
   done
+}
+
+# es-target 已经在跑时重新挂盘。顺序不能错（2026-11-20 踩过）：
+#   节点的 / 是 shared 传播。Pod 还在时挂盘，新挂载会传播进旧 Pod 的卷路径；随后删 Pod，kubelet 清理卷路径时的
+#   umount 又传播回 /mnt/esdata-N，盘被卸掉，重建的 Pod 拿到的还是节点上的空目录（ES 报 master not discovered）。
+# 所以：封锁 worker → 删 es-target 的 Pod（新 Pod 停在 Pending）→ 等节点上没有 esdata 卷挂载 → 挂盘 → 解除封锁。
+remount_with_pods_stopped() {
+  local workers node
+  workers=$(WORKERS)
+  log "es-target 在运行：先封锁 worker、停掉 es-target 的 Pod，再挂盘"
+  # shellcheck disable=SC2086
+  kc cordon $workers
+  # 中途失败也要解除封锁，否则之后所有 Pod 都调度不上去
+  # shellcheck disable=SC2064,SC2086
+  trap "kubectl --context $CTX uncordon $workers >/dev/null" EXIT
+  # ES 的优雅退出最多要 3 分钟
+  kc -n targets delete pod -l "$ES_TARGET_PODS" --wait=true --timeout=300s
+  for _ in $(seq 1 60); do
+    local busy=0
+    for node in $workers; do
+      docker exec "$node" sh -c 'mount | grep -q "local-volume/esdata"' && busy=1
+    done
+    [ $busy = 0 ] && break
+    sleep 2
+  done
+  [ $busy = 0 ] || { echo "2 分钟后节点上还有 esdata 卷挂载，没有挂盘" >&2; return 1; }
+  mount_disks
+  # shellcheck disable=SC2086
+  kc uncordon $workers
+  trap - EXIT
+}
+
+step_disks() {
+  if ! disks_missing; then
+    log "所有 esdata 盘都已挂载，跳过"
+    return 0
+  fi
+  if kc -n targets get pod -l "$ES_TARGET_PODS" -o name 2>/dev/null | grep -q .; then
+    remount_with_pods_stopped
+  else
+    mount_disks  # 第一次建集群：还没有 es-target，直接挂
+  fi
 }
 
 step_helm() {
@@ -149,10 +205,23 @@ summary() {
   docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' $(kind get nodes --name "$CLUSTER")
 }
 
-step_cluster
-step_disks
-step_helm
-step_workloads
-step_wait
-step_seed
-summary
+case "${1:-all}" in
+  all)
+    step_cluster
+    step_disks
+    step_helm
+    step_workloads
+    step_wait
+    step_seed
+    summary
+    ;;
+  remount-disks)
+    # Docker 重启之后用：只重新挂盘并等 es-target 变绿，不动其他组件（make kind-remount）
+    step_disks
+    wait_green targets es-target
+    ;;
+  *)
+    echo "用法：$0 [all|remount-disks]" >&2
+    exit 2
+    ;;
+esac

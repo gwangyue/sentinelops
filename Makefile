@@ -1,5 +1,5 @@
 # 常用命令（CLAUDE.md"命令"一节）。
-.PHONY: check lint typecheck imports test demo-check compose-up compose-down kind-up kind-down aws-up aws-patrol aws-down
+.PHONY: check lint typecheck imports test demo-check compose-up compose-down kind-up kind-remount kind-down aws-up aws-patrol aws-down
 
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 
@@ -32,6 +32,10 @@ compose-down:
 
 kind-up:
 	deploy/kind/kind-up.sh
+
+# Docker 重启之后 es-target 起不来（master not discovered）：loop 盘没挂上，只重新挂盘
+kind-remount:
+	deploy/kind/kind-up.sh remount-disks
 
 kind-down:
 	kind delete cluster --name sentinel

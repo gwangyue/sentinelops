@@ -32,6 +32,7 @@ make check          # lint + 类型检查 + import 检查 + 测试
 make demo-check     # golden-demo.md 中已打开的步骤
 make compose-up     # 回放模式
 make kind-up        # 本地全链路
+make kind-remount   # Docker 重启后 es-target 起不来（master not discovered）：只重新挂 loop 盘
 ```
 
 ## 完成标准
@@ -42,6 +43,6 @@ make kind-up        # 本地全链路
 
 ## 当前状态
 
-- 里程碑：**M5 飞书 ChatOps 进行中**（11-20 开始）。设计见 09-chatops.md、ADR-015，排期在 08 §3 M5。D17 已写完设计；S7 已通过（spike-results.md S7：回调约 3 秒超时、不重发；长连接不广播；用国内飞书 open.feishu.cn）。D18 推送已完成（`sentinel chatops notify`，dev 群实测）。D19 卡片审批已完成（`sentinel chatops serve`；`decide_approval` 由 CLI 和飞书共用；golden-demo 第 11 步离线通过；dev 审批人已写进 `config/chatops.dev.yaml`；真实点击并到 D20 的 kind 全链路）。下一步 D20 固定指令。D20 开始前：kind 上 es-target 3 个数据节点起不来（master not discovered，11-20 Docker 重启后），要先修；飞书凭证文件 `~/.config/sentinelops/feishu-dev.env`（FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_CHAT_ID）还没建M5 不改 Agent 行为，不需要冻结新版本，不需要重新评测
+- 里程碑：**M5 飞书 ChatOps 进行中**（11-20 开始）。设计见 09-chatops.md、ADR-015，排期在 08 §3 M5。D17 已写完设计；S7 已通过（spike-results.md S7：回调约 3 秒超时、不重发；长连接不广播；用国内飞书 open.feishu.cn）。D18 推送已完成（`sentinel chatops notify`，dev 群实测）。D19 卡片审批已完成（`sentinel chatops serve`；`decide_approval` 由 CLI 和飞书共用；golden-demo 第 11 步离线通过；dev 审批人已写进 `config/chatops.dev.yaml`；真实点击并到 D20 的 kind 全链路）。下一步 D20 固定指令。D20 开始前：飞书凭证文件 `~/.config/sentinelops/feishu-dev.env`（FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_CHAT_ID）还没建M5 不改 Agent 行为，不需要冻结新版本，不需要重新评测
 - 上一个里程碑：**M4 完成**（tag `m4`，报告 docs/reports/M4-report.md、代码导览 M4-code-tour.md）。08 的四个里程碑全部结束。M4：D13 通用化（tag `m4-base`）+ MySQL 专家包；D14 周报、MCP；D15–D16 EKS 悉尼（组织 SCP 只放开 ap-southeast-2，账号是免费套餐、节点 m7i-flex.large；`make aws-up / aws-patrol / aws-down`）。零改动验收有 5 条例外（见 M4 报告 §3）。缺口：漂移检查（M2–M4 都没做）。已决定（11-20）：v42 不评测，上线版本仍是 v41；AWS 保持免费套餐。待决定：控制台访问条目（M4 报告 §9）
 - 最新版本：v41（L3 开，L4、L5 不上线；es + mysql 两个专家包）· 数据集标签：es `ds-20261111-1`（17 个场景 34 条）、mysql `ds-20261111-2`（3 个场景 6 条）· 事故流：datasets/streams/es.yaml
