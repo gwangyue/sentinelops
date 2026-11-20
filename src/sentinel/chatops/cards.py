@@ -132,3 +132,50 @@ def event_card(cfg: ChatopsConfig, e: AuditEvent) -> Card | None:
             ],
         )
     return None
+
+
+# ---- 固定指令（09 §5.3；D20）----
+
+# 每条指令的模板和示例。帮助卡片只列出本环境 commands 里开着的那些（prod 没有 bench）
+COMMAND_HELP: dict[str, tuple[str, str]] = {
+    "help": ("/help", "列出可用指令"),
+    "patrol": ("/patrol <target> [--pack es]", "/patrol es-target"),
+    "inv": ("/inv list · /inv show <调查ID>", "/inv show inv_01..."),
+    "approvals": ("/approvals list", "每条待审批重新发一张审批卡片"),
+    "bench": ("/bench inject|revert|record <scenario> [--pack es]", "/bench inject es.disk_watermark.single"),
+    "freeze": ("/freeze <原因>", "/freeze 误操作，先停下"),
+}
+
+
+def cmd_button(text: str, cmd: str, kind: str = "default") -> dict[str, Any]:
+    """指令按钮：value 只带一条指令文本。点击之后和手打这条指令走同一套解析和校验（commands.py），
+    所以按钮不会比手打多出任何权力；value 被伪造也一样。"""
+    return {"tag": "button", "text": {"tag": "plain_text", "content": text}, "type": kind, "value": {"cmd": cmd}}
+
+
+def help_card(cfg: ChatopsConfig, targets: list[str], note: str | None = None) -> Card:
+    """09 §2 D5：模板 + 示例；常用的无参数指令做成按钮（每个目标一个「巡检」、「待审批列表」）。"""
+    rows = [
+        f"`{tpl}`\n　例：{ex}" for name, (tpl, ex) in COMMAND_HELP.items() if name == "help" or name in cfg.commands
+    ]
+    elements: list[dict[str, Any]] = []
+    if note:
+        elements.append(_md(note))
+    elements.append(_md("\n".join(rows)))
+    elements.append(_md("解冻和确认根因只能在 CLI 做：`sentinel unfreeze ...` · `sentinel investigations confirm ...`"))
+    buttons = [cmd_button(f"巡检 {t}", f"/patrol {t}", "primary") for t in targets if "patrol" in cfg.commands]
+    if "approvals" in cfg.commands:
+        buttons.append(cmd_button("待审批列表", "/approvals list"))
+    if buttons:
+        elements.append({"tag": "action", "actions": buttons})
+    return _card(cfg, "指令帮助", "blue", elements)
+
+
+def text_card(
+    cfg: ChatopsConfig, title: str, body: str, template: str = "blue", buttons: list[dict[str, Any]] | None = None
+) -> Card:
+    """指令的回复：已开始 / 结果 / 拒绝，都是一个标题加一段 markdown。"""
+    elements: list[dict[str, Any]] = [_md(body)]
+    if buttons:
+        elements.append({"tag": "action", "actions": buttons})
+    return _card(cfg, title, template, elements)

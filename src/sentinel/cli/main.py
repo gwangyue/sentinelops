@@ -696,32 +696,81 @@ def chatops_serve(
     ] = None,
     config: Annotated[Path | None, typer.Option(help="chatops 配置；默认读 SENTINEL_CHATOPS_CONFIG")] = None,
 ) -> None:
-    """飞书入口（09 §3）：长连接收卡片审批点击 + 同一进程里推送。固定指令在 D20 加。"""
+    """飞书入口（09 §3）：长连接收卡片审批点击和固定指令 + 同一进程里推送。"""
     import logging
+
+    import yaml
 
     from sentinel.chatops.approvals import ApprovalHandler
     from sentinel.chatops.client import LarkFeishuClient
+    from sentinel.chatops.commands import CommandHandler
     from sentinel.chatops.config import load_chatops_config, load_env_file
     from sentinel.chatops.gateway import serve
     from sentinel.chatops.notifier import Notifier
-    from sentinel.core.graph.run import resume_online
+    from sentinel.core.graph.run import PG_URL, resume_online
+    from sentinel.core.graph.run import patrol as run_patrol
     from sentinel.core.store import open_store
     from sentinel.core.toolbackend import Mode
+    from sentinel.eval.dataset import load_scenarios
+    from sentinel.governance.kill_switch import PgFreezeState, freeze
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if env_file:
         typer.echo(f"已从 {env_file} 读入：{', '.join(load_env_file(env_file))}")  # 只打印键名
     cfg = load_chatops_config(config)
+    try:
+        # 启动时就检查群 ID：缺了的话 notifier 线程会在第一轮推送时异常退出，而长连接照常运行、看不出来（D20 踩坑）
+        cfg.resolved_chat_id()
+    except ValueError as e:
+        typer.echo(f"拒绝启动：{e}", err=True)
+        raise typer.Exit(1) from e
     if not cfg.approvers:
-        typer.echo("提醒：approvers 为空，所有审批点击都会被拒绝（09 §5.1）", err=True)
+        typer.echo("提醒：approvers 为空，所有审批点击和指令都会被拒绝（09 §5.1）", err=True)
     store, rem = open_store(), _rem_store()
+    client = LarkFeishuClient(cfg.domain)
+    # 目标 → 专家包：目前只有 governance.yaml 的 mcp.targets 登记了这张表（09 §5.3 的 target 校验用它）
+    targets = yaml.safe_load(Path("config/governance.yaml").read_text(encoding="utf-8"))["mcp"]["targets"]
     handler = ApprovalHandler(rem, store.append_audit, cfg, resume=lambda inv: resume_online(inv, Mode.LIVE))
-    notifier = Notifier(store, rem, LarkFeishuClient(cfg.domain), cfg)
+    commands = CommandHandler(
+        cfg,
+        client,
+        store,
+        rem,
+        targets=targets,
+        scenarios=lambda pack: set(load_scenarios(pack)),
+        # 飞书的巡检用 remediate：有问题就提议修复并停在审批，审批卡片由 notifier 推送（09 §5.3）
+        patrol=lambda target, pack: dict(run_patrol(target, pack, Mode.LIVE, None, inv_mode="remediate")),
+        run_bench=_bench_subprocess,
+        freeze=lambda reason, who: freeze(PgFreezeState(PG_URL), rem, reason, who),
+    )
+    notifier = Notifier(store, rem, client, cfg)
     typer.echo(
         f"[{cfg.env_label}] 连接 {cfg.domain}；审批人 {len(cfg.approvers)} 个，飞书审批上限 {cfg.max_risk}；"
-        f"每 {cfg.poll_interval_s} 秒推送一次"
+        f"指令 {', '.join(cfg.commands)}；每 {cfg.poll_interval_s} 秒推送一次"
     )
-    serve(handler, notifier)
+    serve(handler, commands, notifier)
+
+
+def _bench_subprocess(argv: list[str]) -> tuple[int, str]:
+    """飞书 /bench 的执行方式：子进程跑 `sentinel bench ...`（09 §5.3）。
+
+    record 要用执行器的写凭证：只在子进程的 shell 里 source exec-env.sh，chatops 进程自己的环境里没有写凭证。
+    端口换成 19202，不去抢执行器那个 shell 的 port-forward（exec-env.sh 会先 pkill 同端口的 port-forward）。
+    """
+    import os
+    import subprocess
+    import sys
+
+    cmd = [str(Path(sys.executable).parent / "sentinel"), "bench", *argv]
+    env = dict(os.environ)
+    if argv[0] == "record":
+        # TODO(edge)：只处理了 es（exec-env.sh）；mysql 的 record 要换 mysql-exec-env.sh
+        # TODO(edge)：子进程起的 port-forward 不会随子进程退出
+        env["SENTINEL_EXEC_ES_PORT"] = "19202"
+        cmd = ["bash", "-c", 'source deploy/kind/exec-env.sh >/dev/null && exec "$@"', "bash", *cmd]
+    # TODO(edge)：超时之后故障可能还在集群上，要人用 /bench revert 撤销
+    p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1800, check=False)
+    return p.returncode, p.stdout + p.stderr
 
 
 @mcp_app.command("serve")

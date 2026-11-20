@@ -68,7 +68,7 @@ flowchart LR
     PG -.执行器自己去读.-> X[执行器（不变）]
 ```
 
-`sentinel chatops serve` 在一个进程里同时跑 gateway 和 notifier：D18 先有只跑推送的 `sentinel chatops notify`；D19 有了 `serve`（卡片审批回调 + 推送），D20 再给它加上消息指令。新模块是 `src/sentinel/chatops/`，和 `cli/`、`api/` 平级。`.importlinter` 增加一条规则：`sentinel.chatops` 不能 import `sentinel.exec`。
+`sentinel chatops serve` 在一个进程里同时跑 gateway 和 notifier：D18 先有只跑推送的 `sentinel chatops notify`；D19 有了 `serve`（卡片审批回调 + 推送），D20 给它加上了消息指令（`im.message.receive_v1`）和帮助卡片的指令按钮。新模块是 `src/sentinel/chatops/`，和 `cli/`、`api/` 平级。`.importlinter` 增加一条规则：`sentinel.chatops` 不能 import `sentinel.exec`。
 
 ## 4. 推送
 
@@ -145,6 +145,17 @@ D19 把 CLI `_decide` 里"查审批 → 校验 → `record_decision` → 处理�
 - 解析是确定性的，不调 LLM。消息文本里的 @ 是 `@_user_1` 这样的占位符（S7），先去掉再解析。参数逐个校验：target 必须在 `config/governance.yaml` 的 targets 里；scenario 必须在专家包的场景里。
 - 长任务（`patrol` 需要诊断时、`bench`）先回一张"已开始"的卡片，跑完之后更新这张卡片。
 - `bench` 为什么用子进程：`record` 要用执行器的写凭证。dev 环境下这个凭证来自开发机上的 `deploy/kind/exec-env.sh`，信任边界和你在终端里敲 CLI 一样。chatops 进程本身不 import `exec/`，也不读写凭证（"写凭证只在 `exec/`"这条护栏不受影响）。
+
+D20 实现时定下的几点（09 原文没写明，或者和原文不同的地方）：
+
+- **飞书的 `/patrol` 用 `remediate` 模式**（CLI 默认是 `report_only`）。原因：飞书这个入口本来就是为了在群里走完"发现 → 审批"，只有 remediate 模式才会出审批卡片。安全性不变：修复照样停在审批，执行器照样重新校验。
+- **target 列表取 `config/governance.yaml` 的 `mcp.targets`**（目标 → 专家包）：目前只有这里登记了这张表。`--pack` 可以省略，从目标推出来；写了但和登记的不一致就拒绝。scenario 的 ID 带专家包前缀（`es.disk_watermark.single`）。
+- **帮助卡片的按钮 value 里只带一条指令文本** `{"cmd": "/patrol es-target"}`。点击之后交给和手打同一个入口（`CommandHandler.on_message`）重新做全部检查，所以按钮不比手打多出任何权力，value 被伪造也一样。卡片回调按 value 分流：带 `cmd` 的是指令按钮，其余是审批按钮（`commands.route_card`）。
+- **`/bench inject` 跑完的卡片上带「巡检」按钮**，把"注入 → 巡检 → 审批"接成一条链路。
+- **`/bench record` 的写凭证只进子进程**：子进程的 shell 里 source `exec-env.sh`（端口换成 19202，避免抢执行器 shell 的 port-forward）。chatops 进程自己的环境里没有写凭证。
+- 白名单外的人发指令：回一张"已拒绝"卡片并写日志；别的群来的消息：只写日志，不回话。`/freeze` 的原因前面加 `[feishu]`，和审批一样区分渠道。
+- `sentinel chatops serve` 启动时先检查群 ID，缺了就拒绝启动。D20 踩坑：没有群 ID 时 notifier 线程在第一轮推送就异常退出，长连接照常运行，从外面看不出来。
+- 代码：解析和规则在 `chatops/commands.py`（纯逻辑，依赖注入，`tests/unit/test_chatops_commands.py` 用假数据测）；`gateway.py` 只做 lark 对象的拆装。TODO(edge)：同一条消息被重复投递时，指令会执行两次（卡片按 uuid 去重，只回一次）。
 
 ## 6. 配置和开关
 
