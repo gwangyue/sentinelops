@@ -15,3 +15,7 @@ spike/
 .claude/contracts.unlock
 .claude/settings.local.json
 var/
+
+# 本地教程，不进仓库
+docs/eval-tutorial/
+docs/module-tutorial/
